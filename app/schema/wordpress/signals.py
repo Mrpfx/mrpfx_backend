@@ -1,6 +1,6 @@
 from typing import Optional, List
 from datetime import datetime
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, field_validator
 from .post import WPPostRead, WPPostBase
 
 class SignalBase(BaseModel):
@@ -12,6 +12,13 @@ class SignalBase(BaseModel):
     tp2: Optional[str] = Field(None, description="Take Profit 2")
     price: Optional[float] = Field(0.0, description="Signal price")
     image_url: Optional[str] = Field(None, description="Image URL")
+
+    @field_validator('price', mode='before')
+    @classmethod
+    def parse_price(cls, v):
+        if v == "":
+            return 0.0
+        return v
 
 class SignalCreate(SignalBase):
     title: str = Field(..., description="Signal title")
@@ -37,3 +44,9 @@ class SignalRead(SignalBase):
 
     class Config:
         from_attributes = True
+
+class SignalPagination(BaseModel):
+    items: List[SignalRead]
+    total: int
+    page: int
+    pageSize: int

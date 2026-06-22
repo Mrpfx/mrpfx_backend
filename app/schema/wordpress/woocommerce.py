@@ -564,3 +564,59 @@ class WCDownloadPermission(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============== Coupon Schemas ==============
+
+class WCCouponBase(BaseModel):
+    """Base coupon schema"""
+    code: str = Field(..., description="Coupon code")
+    amount: Decimal = Field(Decimal("0.00"), description="Coupon amount")
+    discount_type: str = Field("fixed_cart", description="Discount type: fixed_cart, percentage, fixed_product, percentage_product")
+    description: Optional[str] = Field(None, description="Coupon description")
+    date_expires: Optional[datetime] = Field(None, description="Expiry date")
+    usage_limit: Optional[int] = Field(None, description="Overall usage limit")
+    usage_limit_per_user: Optional[int] = Field(None, description="Usage limit per user")
+    limit_usage_to_x_items: Optional[int] = Field(None, description="Limit usage to X items")
+    free_shipping: bool = Field(False, description="Whether coupon grants free shipping")
+    product_ids: List[int] = Field(default_factory=list, description="Products this coupon applies to")
+    excluded_product_ids: List[int] = Field(default_factory=list, description="Products this coupon does NOT apply to")
+    exclude_sale_items: bool = Field(False, description="Whether to exclude items on sale")
+    minimum_amount: Decimal = Field(Decimal("0.00"), description="Minimum spend required")
+    maximum_amount: Decimal = Field(Decimal("0.00"), description="Maximum spend allowed")
+    individual_use: bool = Field(False, description="Whether coupon cannot be used with other coupons")
+
+
+class WCCouponCreate(WCCouponBase):
+    """Schema for creating a coupon"""
+    pass
+
+
+class WCCouponUpdate(BaseModel):
+    """Schema for updating a coupon"""
+    code: Optional[str] = None
+    amount: Optional[Decimal] = None
+    discount_type: Optional[str] = None
+    description: Optional[str] = None
+    date_expires: Optional[datetime] = None
+    usage_limit: Optional[int] = None
+    usage_limit_per_user: Optional[int] = None
+    limit_usage_to_x_items: Optional[int] = None
+    free_shipping: Optional[bool] = None
+    product_ids: Optional[List[int]] = None
+    excluded_product_ids: Optional[List[int]] = None
+    exclude_sale_items: Optional[bool] = None
+    minimum_amount: Optional[Decimal] = None
+    maximum_amount: Optional[Decimal] = None
+    individual_use: Optional[bool] = None
+
+
+class WCCouponRead(WCCouponBase):
+    """Schema for reading a coupon"""
+    id: int
+    usage_count: int = 0
+    date_created: datetime
+    date_modified: datetime
+
+    class Config:
+        from_attributes = True

@@ -138,8 +138,8 @@ class AuthService:
             # Compare with user_registered as well
             from datetime import datetime
             try:
-                # user_registered is now a string "YYYY-MM-DD HH:MM:SS"
-                reg_dt = datetime.strptime(user.user_registered, "%Y-%m-%d %H:%M:%S")
+                # user_registered might be str "YYYY-MM-DD HH:MM:SS" or datetime
+                reg_dt = user.user_registered if isinstance(user.user_registered, datetime) else datetime.strptime(user.user_registered, "%Y-%m-%d %H:%M:%S")
                 reg_ts = int(reg_dt.timestamp())
             except (ValueError, TypeError):
                 reg_ts = 0
@@ -148,9 +148,7 @@ class AuthService:
 
             # Use the most recent of the two
             effective_reset_ts = max(last_reset_ts, reg_ts)
-            print(f"[AUTH DEBUG] user_reg: {user.user_registered}, reg_ts: {reg_ts}, last: {last_reset_ts}, force: {force_reset_date}")
             if effective_reset_ts < force_reset_date:
-                print(f"[AUTH DEBUG] FORCING RESET: {effective_reset_ts} < {force_reset_date}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="PASSWORD_RESET_REQUIRED"
@@ -208,8 +206,8 @@ class AuthService:
             # Compare with user_registered as well
             from datetime import datetime
             try:
-                # user_registered is now a string "YYYY-MM-DD HH:MM:SS"
-                reg_dt = datetime.strptime(user.user_registered, "%Y-%m-%d %H:%M:%S")
+                # user_registered might be str "YYYY-MM-DD HH:MM:SS" or datetime
+                reg_dt = user.user_registered if isinstance(user.user_registered, datetime) else datetime.strptime(user.user_registered, "%Y-%m-%d %H:%M:%S")
                 reg_ts = int(reg_dt.timestamp())
             except (ValueError, TypeError):
                 reg_ts = 0

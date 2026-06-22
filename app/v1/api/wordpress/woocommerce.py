@@ -6,7 +6,7 @@ from sqlmodel import Session
 from app.db.session import get_session
 from app.repo.wordpress.woocommerce import (
     WCOrderRepository, WCCustomerRepository, WCProductRepository,
-    WCProductCategoryRepository
+    WCProductCategoryRepository, WCCouponRepository
 )
 from app.model.wordpress.woocommerce import WCOrder, WCCustomerLookup
 from app.schema.wordpress.woocommerce import (
@@ -16,7 +16,8 @@ from app.schema.wordpress.woocommerce import (
     WCProductCategoryRead, WCProductCategoryCreate,
     WCProductCategoryUpdate, WCProductTagRead,
     WCOrderFull, WCCustomerRead, WCOrderCreate, WCOrderUpdate,
-    WCProductAddonField, WCProductAddonsCreate, WCProductAddonsRead
+    WCProductAddonField, WCProductAddonsCreate, WCProductAddonsRead,
+    WCCouponRead, WCCouponCreate, WCCouponUpdate
 )
 from app.service.email import send_order_confirmation_email, send_order_status_update_email
 from app.dependencies.auth import get_current_user, get_current_admin
@@ -477,6 +478,80 @@ async def get_product_tags(
     return await repo.list_all_tags(limit=limit, offset=skip)
 
 
+# ============== Coupons ==============
+
+@router.get("/coupons", response_model=List[WCCouponRead], tags=["WooCommerce Coupons"])
+async def get_coupons(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    search: Optional[str] = None,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """List all coupons (admin only)"""
+    repo = WCCouponRepository(session)
+    return await repo.get_coupons(limit=limit, offset=skip, search=search)
+
+
+@router.get("/coupons/{coupon_id}", response_model=WCCouponRead, tags=["WooCommerce Coupons"])
+async def get_coupon(
+    coupon_id: int,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Get a single coupon by ID (admin only)"""
+    repo = WCCouponRepository(session)
+    coupon = await repo.get_coupon(coupon_id)
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+    return coupon
+
+
+@router.post("/coupons", response_model=WCCouponRead, tags=["WooCommerce Coupons"])
+async def create_coupon(
+    data: WCCouponCreate,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Create a new coupon (admin only)"""
+    repo = WCCouponRepository(session)
+    # Check if code already exists
+    existing = await repo.get_coupon_by_code(data.code)
+    if existing:
+        raise HTTPException(status_code=400, detail="Coupon code already exists")
+
+    return await repo.create_coupon(data)
+
+
+@router.put("/coupons/{coupon_id}", response_model=WCCouponRead, tags=["WooCommerce Coupons"])
+async def update_coupon(
+    coupon_id: int,
+    data: WCCouponUpdate,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Update an existing coupon (admin only)"""
+    repo = WCCouponRepository(session)
+    coupon = await repo.update_coupon(coupon_id, data)
+    if not coupon:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+    return coupon
+
+
+@router.delete("/coupons/{coupon_id}", tags=["WooCommerce Coupons"])
+async def delete_coupon(
+    coupon_id: int,
+    current_admin: User = Depends(get_current_admin),
+    session: Session = Depends(get_session)
+):
+    """Delete a coupon (admin only)"""
+    repo = WCCouponRepository(session)
+    success = await repo.delete_coupon(coupon_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Coupon not found")
+    return {"message": "Coupon deleted successfully"}
+
+
 # ============== Shopping Cart ==============
 
 from app.repo.wordpress.woocommerce import WCCartRepository, WCProductReviewRepository
@@ -490,12 +565,14 @@ from app.schema.wordpress.wc_cart import (
 
 @router.get("/cart", response_model=dict, tags=["WooCommerce Cart"])
 async def get_cart(
+    payment_method: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     """Get the current user's shopping cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.get_cart(current_user.ID)
+    return await repo.get_cart(user_id, payment_method=payment_method)
 
 
 @router.post("/cart/add", response_model=dict, tags=["WooCommerce Cart"])
@@ -505,15 +582,17 @@ async def add_to_cart(
     session: Session = Depends(get_session)
 ):
     """Add a product to the cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
     try:
-        return await repo.add_to_cart(
-            user_id=current_user.ID,
+        await repo.add_to_cart(
+            user_id=user_id,
             product_id=request.product_id,
             quantity=request.quantity,
             variation_id=request.variation_id,
             custom_fields=request.custom_fields
         )
+        return await repo.get_cart(user_id) # Default get_cart
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -525,13 +604,15 @@ async def update_cart_item(
     session: Session = Depends(get_session)
 ):
     """Update cart item quantity"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.update_cart_item(
-        user_id=current_user.ID,
+    await repo.update_cart_item(
+        user_id=user_id,
         product_id=request.product_id,
         quantity=request.quantity,
         variation_id=request.variation_id
     )
+    return await repo.get_cart(user_id)
 
 
 @router.delete("/cart/remove/{product_id}", response_model=dict, tags=["WooCommerce Cart"])
@@ -542,44 +623,52 @@ async def remove_from_cart(
     session: Session = Depends(get_session)
 ):
     """Remove an item from the cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.remove_from_cart(
-        user_id=current_user.ID,
+    await repo.remove_from_cart(
+        user_id=user_id,
         product_id=product_id,
         variation_id=variation_id
     )
+    return await repo.get_cart(user_id)
 
 
 @router.delete("/cart/clear", response_model=dict, tags=["WooCommerce Cart"])
 async def clear_cart(
+    payment_method: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     """Clear all items from the cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.clear_cart(current_user.ID)
+    return await repo.clear_cart(user_id, payment_method=payment_method)
 
 
 @router.post("/cart/coupon", response_model=dict, tags=["WooCommerce Cart"])
 async def apply_coupon(
     request: WCApplyCouponRequest,
+    payment_method: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     """Apply a coupon code to the cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.apply_coupon(current_user.ID, request.coupon_code)
+    return await repo.apply_coupon(user_id, request.coupon_code, payment_method=payment_method)
 
 
 @router.delete("/cart/coupon/{coupon_code}", response_model=dict, tags=["WooCommerce Cart"])
 async def remove_coupon(
     coupon_code: str,
+    payment_method: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     """Remove a coupon from the cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.remove_coupon(current_user.ID, coupon_code)
+    return await repo.remove_coupon(user_id, coupon_code, payment_method=payment_method)
 
 
 # ============== Checkout ==============
@@ -591,6 +680,7 @@ async def checkout(
     session: Session = Depends(get_session)
 ):
     """Create an order from the current cart"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
 
     billing = request.billing_address.model_dump()
@@ -600,7 +690,7 @@ async def checkout(
 
     try:
         result = await repo.checkout(
-            user_id=current_user.ID,
+            user_id=user_id,
             billing_address=billing,
             shipping_address=shipping,
             payment_method=request.payment_method,
@@ -623,8 +713,9 @@ async def get_my_orders(
     session: Session = Depends(get_session)
 ):
     """Get the current user's orders"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.get_user_orders(current_user.ID, limit=limit, offset=skip)
+    return await repo.get_user_orders(user_id, limit=limit, offset=skip)
 
 
 @router.get("/my-orders/summary", response_model=WCUserOrderSummary, tags=["WooCommerce User"])
@@ -633,8 +724,9 @@ async def get_my_order_summary(
     session: Session = Depends(get_session)
 ):
     """Get order summary for the current user"""
+    user_id = current_user.ID
     repo = WCCartRepository(session)
-    return await repo.get_user_order_summary(current_user.ID)
+    return await repo.get_user_order_summary(user_id)
 
 
 @router.get("/my-orders/digital-assets", response_model=List[WCProductRead], tags=["WooCommerce User"])
@@ -643,8 +735,9 @@ async def get_my_digital_assets(
     session: Session = Depends(get_session)
 ):
     """Get all products with access links from the current user's completed orders"""
+    user_id = current_user.ID
     order_repo = WCOrderRepository(session)
-    return await order_repo.get_user_digital_assets(current_user.ID)
+    return await order_repo.get_user_digital_assets(user_id)
 
 
 @router.get("/my-orders/{order_id}", response_model=WCOrderFull, tags=["WooCommerce User"])
@@ -654,11 +747,12 @@ async def get_my_order(
     session: Session = Depends(get_session)
 ):
     """Get a specific order for the current user"""
+    user_id = current_user.ID
     order_repo = WCOrderRepository(session)
     order = await order_repo.get_order_full(order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.customer_id != current_user.ID:
+    if order.customer_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this order")
     return order
 
@@ -687,13 +781,17 @@ async def create_product_review(
     """Submit a review for a product"""
     from fastapi import Request
 
+    user_id = current_user.ID
+    reviewer_name = current_user.display_name or (current_user.user_email.split("@")[0] if current_user.user_email else "Guest")
+    reviewer_email = current_user.user_email
+
     repo = WCProductReviewRepository(session)
     try:
         return await repo.create_review(
             product_id=product_id,
-            user_id=current_user.ID,
-            reviewer_name=current_user.full_name or current_user.email.split("@")[0],
-            reviewer_email=current_user.email,
+            user_id=user_id,
+            reviewer_name=reviewer_name,
+            reviewer_email=reviewer_email,
             review=review_data.review,
             rating=review_data.rating
         )

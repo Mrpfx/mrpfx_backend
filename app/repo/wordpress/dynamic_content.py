@@ -1,11 +1,13 @@
 from typing import List, Optional
 from datetime import datetime
+from sqlalchemy import desc, func
+from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model.wordpress.core import WPPost, WPPostMeta
-from app.schema.wordpress.signals import SignalRead, SignalCreate, SignalUpdate
-from app.schema.wordpress.trading_tools import TradingToolRead, TradingToolCreate, TradingToolUpdate
-from app.schema.wordpress.books import BookRead, BookCreate, BookUpdate
+from app.schema.wordpress.signals import SignalRead, SignalCreate, SignalUpdate, SignalPagination
+from app.schema.wordpress.trading_tools import TradingToolRead, TradingToolCreate, TradingToolUpdate, TradingToolPagination
+from app.schema.wordpress.books import BookRead, BookCreate, BookUpdate, BookPagination
 from .posts import WPPostRepository
 
 class DynamicContentRepository:
@@ -14,9 +16,22 @@ class DynamicContentRepository:
         self.post_repo = WPPostRepository(session)
 
     # ============== Signals ==============
-    async def get_signals(self, signal_type: Optional[str] = None, limit: int = 20, offset: int = 0) -> List[SignalRead]:
+    async def get_signals(self, signal_type: Optional[str] = None, limit: int = 20, offset: int = 0) -> SignalPagination:
         stmt = select(WPPost).where(WPPost.post_type == "signal", WPPost.post_status == "publish")
-        stmt = stmt.order_by(WPPost.post_date.desc()).limit(limit).offset(offset)
+
+        if signal_type:
+            MetaType = aliased(WPPostMeta)
+            stmt = stmt.join(MetaType, WPPost.ID == MetaType.post_id).where(
+                MetaType.meta_key == "_signal_type",
+                MetaType.meta_value == signal_type
+            )
+
+        # Count total
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await self.session.exec(count_stmt)
+        total = total_result.one()
+
+        stmt = stmt.order_by(desc(WPPost.post_date)).limit(limit).offset(offset)
         result = await self.session.exec(stmt)
         posts = result.all()
 
@@ -24,10 +39,6 @@ class DynamicContentRepository:
         for p in posts:
             meta = await self.post_repo.get_post_meta(p.ID)
             meta_dict = {m["meta_key"]: m["meta_value"] for m in meta}
-
-            # Filter by type if requested
-            if signal_type and meta_dict.get("_signal_type") != signal_type:
-                continue
 
             signals.append(SignalRead(
                 id=p.ID,
@@ -40,10 +51,16 @@ class DynamicContentRepository:
                 sl=meta_dict.get("_signal_sl", ""),
                 tp1=meta_dict.get("_signal_tp1", ""),
                 tp2=meta_dict.get("_signal_tp2"),
-                price=float(meta_dict.get("_signal_price", 0.0)),
+                price=float(meta_dict.get("_signal_price", 0.0) or 0.0),
                 image_url=meta_dict.get("_signal_image_url")
             ))
-        return signals
+
+        return SignalPagination(
+            items=signals,
+            total=total,
+            page=(offset // limit) + 1,
+            pageSize=limit
+        )
 
     async def create_signal(self, user_id: int, data: SignalCreate) -> SignalRead:
         new_post = WPPost(
@@ -141,9 +158,30 @@ class DynamicContentRepository:
         )
 
     # ============== Trading Tools ==============
-    async def get_trading_tools(self, tool_type: Optional[str] = None, category: Optional[str] = None, limit: int = 50) -> List[TradingToolRead]:
+    async def get_trading_tools(self, tool_type: Optional[str] = None, category: Optional[str] = None, limit: int = 50, offset: int = 0) -> TradingToolPagination:
         stmt = select(WPPost).where(WPPost.post_type == "trading_tool", WPPost.post_status == "publish")
-        stmt = stmt.limit(limit)
+
+        # SQL-level filtering for better performance and to fix "limit before filter" bug
+        if tool_type:
+            MetaType = aliased(WPPostMeta)
+            stmt = stmt.join(MetaType, WPPost.ID == MetaType.post_id).where(
+                MetaType.meta_key == "_tool_type",
+                MetaType.meta_value == tool_type
+            )
+
+        if category:
+            MetaCat = aliased(WPPostMeta)
+            stmt = stmt.join(MetaCat, WPPost.ID == MetaCat.post_id).where(
+                MetaCat.meta_key == "_tool_category",
+                MetaCat.meta_value == category
+            )
+
+        # Count total
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await self.session.exec(count_stmt)
+        total = total_result.one()
+
+        stmt = stmt.order_by(desc(WPPost.post_date)).limit(limit).offset(offset)
         result = await self.session.exec(stmt)
         posts = result.all()
 
@@ -152,11 +190,6 @@ class DynamicContentRepository:
             meta = await self.post_repo.get_post_meta(p.ID)
             meta_dict = {m["meta_key"]: m["meta_value"] for m in meta}
 
-            if tool_type and meta_dict.get("_tool_type") != tool_type:
-                continue
-            if category and meta_dict.get("_tool_category") != category:
-                continue
-
             tools.append(TradingToolRead(
                 id=p.ID,
                 title=p.post_title,
@@ -164,12 +197,20 @@ class DynamicContentRepository:
                 tool_type=meta_dict.get("_tool_type", ""),
                 category=meta_dict.get("_tool_category", "free"),
                 description=meta_dict.get("_tool_description", ""),
-                price=float(meta_dict.get("_tool_price", 0.0)),
+                price=float(meta_dict.get("_tool_price", 0.0) or 0.0),
                 image_url=meta_dict.get("_tool_image_url"),
                 download_url=meta_dict.get("_tool_download_url"),
-                purchase_url=meta_dict.get("_tool_purchase_url")
+                purchase_url=meta_dict.get("_tool_purchase_url"),
+                seller_payment_link=meta_dict.get("_tool_seller_payment_link"),
+                whop_payment_link=meta_dict.get("_tool_whop_payment_link")
             ))
-        return tools
+
+        return TradingToolPagination(
+            items=tools,
+            total=total,
+            page=(offset // limit) + 1,
+            pageSize=limit
+        )
 
     async def create_trading_tool(self, user_id: int, data: TradingToolCreate) -> TradingToolRead:
         new_post = WPPost(
@@ -193,6 +234,10 @@ class DynamicContentRepository:
             await self.post_repo.set_post_meta(post_id, "_tool_download_url", data.download_url)
         if data.purchase_url:
             await self.post_repo.set_post_meta(post_id, "_tool_purchase_url", data.purchase_url)
+        if data.seller_payment_link:
+            await self.post_repo.set_post_meta(post_id, "_tool_seller_payment_link", data.seller_payment_link)
+        if data.whop_payment_link:
+            await self.post_repo.set_post_meta(post_id, "_tool_whop_payment_link", data.whop_payment_link)
         await self.post_repo.set_post_meta(post_id, "_tool_price", str(data.price or 0.0))
         if data.image_url:
             await self.post_repo.set_post_meta(post_id, "_tool_image_url", data.image_url)
@@ -222,6 +267,10 @@ class DynamicContentRepository:
             await self.post_repo.set_post_meta(tool_id, "_tool_download_url", data.download_url)
         if data.purchase_url:
             await self.post_repo.set_post_meta(tool_id, "_tool_purchase_url", data.purchase_url)
+        if data.seller_payment_link is not None:
+            await self.post_repo.set_post_meta(tool_id, "_tool_seller_payment_link", data.seller_payment_link)
+        if data.whop_payment_link is not None:
+            await self.post_repo.set_post_meta(tool_id, "_tool_whop_payment_link", data.whop_payment_link)
         if data.price is not None:
             await self.post_repo.set_post_meta(tool_id, "_tool_price", str(data.price))
         if data.image_url:
@@ -256,13 +305,28 @@ class DynamicContentRepository:
             price=float(meta_dict.get("_tool_price", 0.0)),
             image_url=meta_dict.get("_tool_image_url"),
             download_url=meta_dict.get("_tool_download_url"),
-            purchase_url=meta_dict.get("_tool_purchase_url")
+            purchase_url=meta_dict.get("_tool_purchase_url"),
+            seller_payment_link=meta_dict.get("_tool_seller_payment_link"),
+            whop_payment_link=meta_dict.get("_tool_whop_payment_link")
         )
 
     # ============== Books ==============
-    async def get_books(self, is_free: Optional[bool] = None, limit: int = 50) -> List[BookRead]:
+    async def get_books(self, is_free: Optional[bool] = None, limit: int = 50, offset: int = 0) -> BookPagination:
         stmt = select(WPPost).where(WPPost.post_type == "forex_book", WPPost.post_status == "publish")
-        stmt = stmt.limit(limit)
+
+        if is_free is not None:
+            MetaFree = aliased(WPPostMeta)
+            stmt = stmt.join(MetaFree, WPPost.ID == MetaFree.post_id).where(
+                MetaFree.meta_key == "_book_is_free",
+                MetaFree.meta_value == ("1" if is_free else "0")
+            )
+
+        # Count total
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_result = await self.session.exec(count_stmt)
+        total = total_result.one()
+
+        stmt = stmt.order_by(desc(WPPost.post_date)).limit(limit).offset(offset)
         result = await self.session.exec(stmt)
         posts = result.all()
 
@@ -271,22 +335,26 @@ class DynamicContentRepository:
             meta = await self.post_repo.get_post_meta(p.ID)
             meta_dict = {m["meta_key"]: m["meta_value"] for m in meta}
 
-            book_is_free = meta_dict.get("_book_is_free") == "1"
-            if is_free is not None and book_is_free != is_free:
-                continue
-
             books.append(BookRead(
                 id=p.ID,
                 title=p.post_title,
                 status=p.post_status,
-                is_free=book_is_free,
+                is_free=meta_dict.get("_book_is_free") == "1",
                 description=meta_dict.get("_book_description", ""),
-                price=float(meta_dict.get("_book_price", 0.0)),
+                price=float(meta_dict.get("_book_price", 0.0) or 0.0),
                 image_url=meta_dict.get("_book_image_url"),
                 download_url=meta_dict.get("_book_download_url"),
-                purchase_url=meta_dict.get("_book_purchase_url")
+                purchase_url=meta_dict.get("_book_purchase_url"),
+                seller_payment_link=meta_dict.get("_book_seller_payment_link"),
+                whop_payment_link=meta_dict.get("_book_whop_payment_link")
             ))
-        return books
+
+        return BookPagination(
+            items=books,
+            total=total,
+            page=(offset // limit) + 1,
+            pageSize=limit
+        )
 
     async def create_book(self, user_id: int, data: BookCreate) -> BookRead:
         new_post = WPPost(
@@ -309,6 +377,10 @@ class DynamicContentRepository:
             await self.post_repo.set_post_meta(post_id, "_book_download_url", data.download_url)
         if data.purchase_url:
             await self.post_repo.set_post_meta(post_id, "_book_purchase_url", data.purchase_url)
+        if data.seller_payment_link:
+            await self.post_repo.set_post_meta(post_id, "_book_seller_payment_link", data.seller_payment_link)
+        if data.whop_payment_link:
+            await self.post_repo.set_post_meta(post_id, "_book_whop_payment_link", data.whop_payment_link)
         await self.post_repo.set_post_meta(post_id, "_book_price", str(data.price or 0.0))
         if data.image_url:
             await self.post_repo.set_post_meta(post_id, "_book_image_url", data.image_url)
@@ -336,6 +408,10 @@ class DynamicContentRepository:
             await self.post_repo.set_post_meta(book_id, "_book_download_url", data.download_url)
         if data.purchase_url:
             await self.post_repo.set_post_meta(book_id, "_book_purchase_url", data.purchase_url)
+        if data.seller_payment_link is not None:
+            await self.post_repo.set_post_meta(book_id, "_book_seller_payment_link", data.seller_payment_link)
+        if data.whop_payment_link is not None:
+            await self.post_repo.set_post_meta(book_id, "_book_whop_payment_link", data.whop_payment_link)
         if data.price is not None:
             await self.post_repo.set_post_meta(book_id, "_book_price", str(data.price))
         if data.image_url:
@@ -369,7 +445,9 @@ class DynamicContentRepository:
             price=float(meta_dict.get("_book_price", 0.0)),
             image_url=meta_dict.get("_book_image_url"),
             download_url=meta_dict.get("_book_download_url"),
-            purchase_url=meta_dict.get("_book_purchase_url")
+            purchase_url=meta_dict.get("_book_purchase_url"),
+            seller_payment_link=meta_dict.get("_book_seller_payment_link"),
+            whop_payment_link=meta_dict.get("_book_whop_payment_link")
         )
 
     # ============== Videos ==============

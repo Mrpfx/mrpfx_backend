@@ -4,9 +4,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.db.session import get_session
 from app.repo.wordpress.dynamic_content import DynamicContentRepository
-from app.schema.wordpress.signals import SignalRead, SignalCreate, SignalUpdate
-from app.schema.wordpress.trading_tools import TradingToolRead, TradingToolCreate, TradingToolUpdate
-from app.schema.wordpress.books import BookRead, BookCreate, BookUpdate
+from app.schema.wordpress.signals import SignalRead, SignalCreate, SignalUpdate, SignalPagination
+from app.schema.wordpress.trading_tools import TradingToolRead, TradingToolCreate, TradingToolUpdate, TradingToolPagination
+from app.schema.wordpress.books import BookRead, BookCreate, BookUpdate, BookPagination
 from app.schema.wordpress.videos import YouTubeVideoRead
 from app.dependencies.auth import get_current_user
 from app.model.user import User
@@ -15,7 +15,7 @@ router = APIRouter()
 
 # ============== User-Side Endpoints ==============
 
-@router.get("/signals", response_model=List[SignalRead], tags=["Dynamic Pages"])
+@router.get("/signals", response_model=SignalPagination, tags=["Dynamic Pages"])
 async def get_signals(
     type: Optional[str] = Query(None, description="vip or free"),
     limit: int = Query(20, le=100),
@@ -35,24 +35,52 @@ async def get_trading_videos(
     repo = DynamicContentRepository(session)
     return await repo.get_trading_videos(limit=limit)
 
-@router.get("/trading-tools", response_model=List[TradingToolRead], tags=["Dynamic Pages"])
+@router.get("/trading-tools", response_model=TradingToolPagination, tags=["Dynamic Pages"])
 async def get_trading_tools(
     type: Optional[str] = Query(None, description="bot or indicator"),
     category: Optional[str] = Query(None, description="vip or free"),
+    limit: int = Query(20, le=100),
+    offset: int = Query(0),
     session: AsyncSession = Depends(get_session)
 ):
     """Get list of trading tools (bots/indicators)."""
     repo = DynamicContentRepository(session)
-    return await repo.get_trading_tools(tool_type=type, category=category)
+    return await repo.get_trading_tools(tool_type=type, category=category, limit=limit, offset=offset)
 
-@router.get("/books", response_model=List[BookRead], tags=["Dynamic Pages"])
+@router.get("/books", response_model=BookPagination, tags=["Dynamic Pages"])
 async def get_books(
     is_free: Optional[bool] = Query(None),
+    limit: int = Query(20, le=100),
+    offset: int = Query(0),
     session: AsyncSession = Depends(get_session)
 ):
     """Get list of forex books."""
     repo = DynamicContentRepository(session)
-    return await repo.get_books(is_free=is_free)
+    return await repo.get_books(is_free=is_free, limit=limit, offset=offset)
+
+@router.get("/trading-tools/{tool_id}", response_model=TradingToolRead, tags=["Dynamic Pages"])
+async def get_trading_tool(
+    tool_id: int,
+    session: AsyncSession = Depends(get_session)
+):
+    """Get a single trading tool by ID."""
+    repo = DynamicContentRepository(session)
+    tool = await repo.get_trading_tool(tool_id)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Trading tool not found")
+    return tool
+
+@router.get("/books/{book_id}", response_model=BookRead, tags=["Dynamic Pages"])
+async def get_book(
+    book_id: int,
+    session: AsyncSession = Depends(get_session)
+):
+    """Get a single forex book by ID."""
+    repo = DynamicContentRepository(session)
+    book = await repo.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return book
 
 # ============== Admin-Side Endpoints ==============
 

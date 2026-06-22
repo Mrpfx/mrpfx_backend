@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 class TraderPerformanceRecord(BaseModel):
+    performance_id: Optional[int] = Field(None, alias="performance_id")
     month: str = Field(..., alias="month")
     winRate: str = Field(..., alias="winRate")
     monthlyRoi: str = Field(..., alias="monthlyRoi")

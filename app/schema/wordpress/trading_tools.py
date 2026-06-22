@@ -1,5 +1,5 @@
-from typing import Optional
-from pydantic import Field, BaseModel
+from typing import Optional, List
+from pydantic import Field, BaseModel, field_validator
 
 class TradingToolBase(BaseModel):
     tool_type: str = Field(..., description="Tool type (bot or indicator)")
@@ -9,6 +9,15 @@ class TradingToolBase(BaseModel):
     image_url: Optional[str] = Field(None, description="Image URL")
     download_url: Optional[str] = Field(None, description="Download URL")
     purchase_url: Optional[str] = Field(None, description="Purchase URL")
+    seller_payment_link: Optional[str] = Field(None, description="Selar payment link")
+    whop_payment_link: Optional[str] = Field(None, description="Whop payment link")
+
+    @field_validator('price', mode='before')
+    @classmethod
+    def parse_price(cls, v):
+        if v == "":
+            return 0.0
+        return v
 
 class TradingToolCreate(TradingToolBase):
     title: str = Field(..., description="Tool title")
@@ -23,6 +32,8 @@ class TradingToolUpdate(BaseModel):
     image_url: Optional[str] = None
     download_url: Optional[str] = None
     purchase_url: Optional[str] = None
+    seller_payment_link: Optional[str] = None
+    whop_payment_link: Optional[str] = None
     status: Optional[str] = None
 
 class TradingToolRead(TradingToolBase):
@@ -32,3 +43,9 @@ class TradingToolRead(TradingToolBase):
 
     class Config:
         from_attributes = True
+
+class TradingToolPagination(BaseModel):
+    items: List[TradingToolRead]
+    total: int
+    page: int
+    pageSize: int

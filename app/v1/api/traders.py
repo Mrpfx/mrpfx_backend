@@ -76,6 +76,7 @@ async def get_trader_performance(
         # Map to the response schema
         performance_records = [
             TraderPerformanceRecord(
+                performance_id=perf.id,
                 month=perf.month,
                 winRate=perf.win_rate,
                 monthlyRoi=perf.monthly_roi,

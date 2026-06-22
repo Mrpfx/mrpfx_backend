@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs(os.path.join(base_dir, "wp-content/uploads"), exist_ok=True)
 
-    await ini_db()
+    # await ini_db()
     logger.info("Database tables created/verified")
     yield
     # Shutdown
@@ -93,6 +93,8 @@ origins = [
     "https://mrpfx.vercel.app",
     "http://localhost:3000",
     "http://localhost:8000",
+    "https://mrpfx.com",
+    "https://www.mrpfx.com",
 ]
 
 app.add_middleware(

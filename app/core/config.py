@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "MRPFX Backend"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
+    BACKEND_URL: str = "http://localhost:8000"
 
     # Database - set USE_SQLITE=false to use PostgreSQL
     USE_SQLITE: bool = True  # Set to False for PostgreSQL
@@ -42,7 +43,7 @@ class Settings(BaseSettings):
     # JWT Settings
     JWT_SECRET_KEY: str = "mrpfx_secret_key_change_me_in_production"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1080
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 525600
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Encryption Key

@@ -20,8 +20,10 @@ from app.schema.wordpress.woocommerce import (
     WCProductCategoryCreate, WCProductCategoryUpdate,
     WCOrderFull, WCOrderAddress as WCOrderAddressSchema, WCOrderItemRead,
     WCOrderCreate, WCOrderUpdate,
-    WCProductAddonField, WCProductAddonsRead
+    WCProductAddonField, WCProductAddonsRead,
+    WCCouponRead, WCCouponCreate, WCCouponUpdate
 )
+from fastapi import HTTPException
 
 
 class WCOrderRepository:
@@ -1482,12 +1484,14 @@ class WCProductRepository:
             active_price = sale if sale and sale not in ("", "0") else regular
             await self._set_product_meta(variation_id, "_price", active_price)
 
+        parent_id = post.post_parent
         await self.session.commit()
 
         # Sync min/max price range on parent product
-        await self._update_product_price_range(post.post_parent)
+        if parent_id:
+            await self._update_product_price_range(parent_id)
 
-        return next((v for v in await self.get_product_variations(post.post_parent) if v.id == variation_id), None)
+        return next((v for v in await self.get_product_variations(parent_id) if v.id == variation_id), None)
 
     async def delete_variation(self, variation_id: int) -> bool:
         """Delete a variation permanently"""
@@ -1938,14 +1942,217 @@ class WCCustomerRepository:
         return result.first()
 
 
+class WCCouponRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_coupon(self, coupon_id: int) -> Optional[WCCouponRead]:
+        """Get a coupon by ID with all metadata"""
+        stmt = select(WPPost).where(
+            WPPost.ID == coupon_id,
+            WPPost.post_type == "shop_coupon"
+        )
+        result = await self.session.exec(stmt)
+        post = result.first()
+        if not post:
+            return None
+
+        # Fetch all related meta
+        meta_stmt = select(WPPostMeta).where(WPPostMeta.post_id == coupon_id)
+        meta_result = await self.session.exec(meta_stmt)
+        meta = {m.meta_key: m.meta_value for m in meta_result.all()}
+
+        return self._map_to_coupon_read(post, meta)
+
+    async def get_coupon_by_code(self, code: str) -> Optional[WCCouponRead]:
+        """Get a coupon by its code (post_title) - Case-insensitive"""
+        code_clean = code.strip().lower()
+        stmt = select(WPPost).where(
+            func.lower(WPPost.post_title) == code_clean,
+            WPPost.post_type == "shop_coupon",
+            WPPost.post_status == "publish"
+        )
+        result = await self.session.exec(stmt)
+        post = result.first()
+        if not post:
+            return None
+
+        meta_stmt = select(WPPostMeta).where(WPPostMeta.post_id == post.ID)
+        meta_result = await self.session.exec(meta_stmt)
+        meta = {m.meta_key: m.meta_value for m in meta_result.all()}
+
+        return self._map_to_coupon_read(post, meta)
+
+    async def get_coupons(self, limit: int = 10, offset: int = 0, search: str = None) -> List[WCCouponRead]:
+        """Get list of coupons"""
+        stmt = select(WPPost).where(WPPost.post_type == "shop_coupon")
+        if search:
+            stmt = stmt.where(or_(
+                WPPost.post_title.like(f"%{search}%"),
+                WPPost.post_excerpt.like(f"%{search}%")
+            ))
+
+        stmt = stmt.order_by(WPPost.post_date.desc()).limit(limit).offset(offset)
+        result = await self.session.exec(stmt)
+        posts = result.all()
+
+        coupons = []
+        for post in posts:
+            meta_stmt = select(WPPostMeta).where(WPPostMeta.post_id == post.ID)
+            meta_result = await self.session.exec(meta_stmt)
+            meta = {m.meta_key: m.meta_value for m in meta_result.all()}
+            coupons.append(self._map_to_coupon_read(post, meta))
+
+        return coupons
+
+    async def create_coupon(self, data: WCCouponCreate) -> WCCouponRead:
+        """Create a new coupon"""
+        post = WPPost(
+            post_title=data.code,
+            post_excerpt=data.description or "",
+            post_status="publish",
+            post_type="shop_coupon",
+            post_author=1 # Admin
+        )
+        self.session.add(post)
+        await self.session.flush() # Get ID
+
+        coupon_id = post.ID
+        meta_items = self._map_to_meta(data)
+        for key, value in meta_items.items():
+            meta = WPPostMeta(post_id=coupon_id, meta_key=key, meta_value=str(value))
+            self.session.add(meta)
+
+        await self.session.commit()
+        return await self.get_coupon(coupon_id)
+
+    async def update_coupon(self, coupon_id: int, data: WCCouponUpdate) -> Optional[WCCouponRead]:
+        """Update an existing coupon"""
+        stmt = select(WPPost).where(WPPost.ID == coupon_id, WPPost.post_type == "shop_coupon")
+        result = await self.session.exec(stmt)
+        post = result.first()
+        if not post:
+            return None
+
+        if data.code: post.post_title = data.code
+        if data.description is not None: post.post_excerpt = data.description
+        post.post_modified = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        self.session.add(post)
+
+        # Update meta
+        update_meta = self._map_to_meta_partial(data)
+        for key, value in update_meta.items():
+            meta_stmt = select(WPPostMeta).where(
+                WPPostMeta.post_id == coupon_id,
+                WPPostMeta.meta_key == key
+            )
+            existing_meta = (await self.session.exec(meta_stmt)).first()
+            if existing_meta:
+                existing_meta.meta_value = str(value)
+                self.session.add(existing_meta)
+            else:
+                new_meta = WPPostMeta(post_id=coupon_id, meta_key=key, meta_value=str(value))
+                self.session.add(new_meta)
+
+        await self.session.commit()
+        return await self.get_coupon(coupon_id)
+
+    async def delete_coupon(self, coupon_id: int) -> bool:
+        """Delete a coupon"""
+        stmt = select(WPPost).where(WPPost.ID == coupon_id, WPPost.post_type == "shop_coupon")
+        result = await self.session.exec(stmt)
+        post = result.first()
+        if not post:
+            return False
+
+        await self.session.delete(post)
+        # Cascade delete meta
+        meta_stmt = select(WPPostMeta).where(WPPostMeta.post_id == coupon_id)
+        metas = (await self.session.exec(meta_stmt)).all()
+        for m in metas:
+            await self.session.delete(m)
+
+        await self.session.commit()
+        return True
+
+    def _map_to_coupon_read(self, post: WPPost, meta: Dict[str, str]) -> WCCouponRead:
+        """Helper to map post and meta to WCCouponRead"""
+        product_ids = []
+        if meta.get("product_ids"):
+            product_ids = [int(i.strip()) for i in meta["product_ids"].split(",") if i.strip()]
+
+        excl_ids = []
+        if meta.get("exclude_product_ids"):
+            excl_ids = [int(i.strip()) for i in meta["exclude_product_ids"].split(",") if i.strip()]
+
+        return WCCouponRead(
+            id=post.ID,
+            code=post.post_title,
+            description=post.post_excerpt,
+            amount=Decimal(meta.get("coupon_amount", "0.00")),
+            discount_type=meta.get("discount_type", "fixed_cart"),
+            date_expires=datetime.strptime(meta["expiry_date"], "%Y-%m-%d") if meta.get("expiry_date") else None,
+            usage_limit=int(meta.get("usage_limit", 0)) if meta.get("usage_limit") else None,
+            usage_limit_per_user=int(meta.get("usage_limit_per_user", 0)) if meta.get("usage_limit_per_user") else None,
+            usage_count=int(meta.get("usage_count", 0)),
+            free_shipping=meta.get("free_shipping") == "yes",
+            product_ids=product_ids,
+            excluded_product_ids=excl_ids,
+            exclude_sale_items=meta.get("exclude_sale_items") == "yes",
+            minimum_amount=Decimal(meta.get("minimum_amount", "0.00")),
+            maximum_amount=Decimal(meta.get("maximum_amount", "0.00")),
+            individual_use=meta.get("individual_use") == "yes",
+            date_created=post.post_date if isinstance(post.post_date, datetime) else datetime.strptime(post.post_date, "%Y-%m-%d %H:%M:%S"),
+            date_modified=post.post_modified if isinstance(post.post_modified, datetime) else datetime.strptime(post.post_modified, "%Y-%m-%d %H:%M:%S")
+        )
+
+    def _map_to_meta(self, data: WCCouponCreate) -> Dict[str, Any]:
+        """Map schema to WooCommerce meta keys"""
+        return {
+            "discount_type": data.discount_type,
+            "coupon_amount": str(data.amount),
+            "individual_use": "yes" if data.individual_use else "no",
+            "product_ids": ",".join(map(str, data.product_ids)),
+            "exclude_product_ids": ",".join(map(str, data.excluded_product_ids)),
+            "usage_limit": str(data.usage_limit) if data.usage_limit else "",
+            "usage_limit_per_user": str(data.usage_limit_per_user) if data.usage_limit_per_user else "",
+            "limit_usage_to_x_items": str(data.limit_usage_to_x_items) if data.limit_usage_to_x_items else "",
+            "expiry_date": data.date_expires.strftime("%Y-%m-%d") if data.date_expires else "",
+            "free_shipping": "yes" if data.free_shipping else "no",
+            "exclude_sale_items": "yes" if data.exclude_sale_items else "no",
+            "minimum_amount": str(data.minimum_amount),
+            "maximum_amount": str(data.maximum_amount),
+            "usage_count": "0"
+        }
+
+    def _map_to_meta_partial(self, data: WCCouponUpdate) -> Dict[str, Any]:
+        """Map partial update schema to meta keys"""
+        meta = {}
+        if data.discount_type: meta["discount_type"] = data.discount_type
+        if data.amount is not None: meta["coupon_amount"] = str(data.amount)
+        if data.individual_use is not None: meta["individual_use"] = "yes" if data.individual_use else "no"
+        if data.product_ids is not None: meta["product_ids"] = ",".join(map(str, data.product_ids))
+        if data.excluded_product_ids is not None: meta["exclude_product_ids"] = ",".join(map(str, data.excluded_product_ids))
+        if data.usage_limit is not None: meta["usage_limit"] = str(data.usage_limit)
+        if data.usage_limit_per_user is not None: meta["usage_limit_per_user"] = str(data.usage_limit_per_user)
+        if data.date_expires is not None: meta["expiry_date"] = data.date_expires.strftime("%Y-%m-%d") if data.date_expires else ""
+        if data.free_shipping is not None: meta["free_shipping"] = "yes" if data.free_shipping else "no"
+        if data.exclude_sale_items is not None: meta["exclude_sale_items"] = "yes" if data.exclude_sale_items else "no"
+        if data.minimum_amount is not None: meta["minimum_amount"] = str(data.minimum_amount)
+        if data.maximum_amount is not None: meta["maximum_amount"] = str(data.maximum_amount)
+        return meta
+
+
 class WCCartRepository:
     """Repository for managing WooCommerce cart and checkout"""
 
     def __init__(self, session: AsyncSession):
         self.session = session
         self._product_repo = WCProductRepository(session)
+        self._coupon_repo = WCCouponRepository(session)
 
-    async def get_cart(self, user_id: int) -> Dict[str, Any]:
+    async def get_cart(self, user_id: int, payment_method: Optional[str] = None) -> Dict[str, Any]:
         """Get cart for a user from session data"""
         from app.model.wordpress.woocommerce import WCSession
         import json
@@ -1972,8 +2179,8 @@ class WCCartRepository:
 
         try:
             # WooCommerce stores serialized PHP data, we'll use JSON for our custom carts
-            cart_data = json.loads(session.session_value)
-            return await self._build_cart_response(user_id, cart_data)
+            cart_data = json.loads(session.session_value) if session.session_value else {"items": [], "coupon_codes": []}
+            return await self._build_cart_response(user_id, cart_data, payment_method)
         except (json.JSONDecodeError, TypeError):
             return {
                 "user_id": user_id,
@@ -1987,7 +2194,7 @@ class WCCartRepository:
                 "coupon_codes": []
             }
 
-    async def _build_cart_response(self, user_id: int, cart_data: Dict) -> Dict[str, Any]:
+    async def _build_cart_response(self, user_id: int, cart_data: Dict, payment_method: Optional[str] = None) -> Dict[str, Any]:
         """Build cart response with product details"""
         items = []
         subtotal = 0
@@ -2048,17 +2255,67 @@ class WCCartRepository:
                     "custom_fields": item.get("custom_fields")
                 })
 
+        discount_total = 0
+        if cart_data.get("coupon_codes"):
+            discount_total = await self._calculate_cart_discount(subtotal, items, cart_data["coupon_codes"], payment_method)
+
         return {
             "user_id": user_id,
             "items": items,
             "subtotal": round(subtotal, 2),
-            "discount_total": cart_data.get("discount_total", 0),
+            "discount_total": round(discount_total, 2),
             "shipping_total": cart_data.get("shipping_total", 0),
             "tax_total": cart_data.get("tax_total", 0),
-            "total": round(subtotal - cart_data.get("discount_total", 0) + cart_data.get("shipping_total", 0) + cart_data.get("tax_total", 0), 2),
+            "total": round(subtotal - discount_total + cart_data.get("shipping_total", 0) + cart_data.get("tax_total", 0), 2),
             "item_count": sum(item.get("quantity", 1) for item in cart_data.get("items", [])),
             "coupon_codes": cart_data.get("coupon_codes", [])
         }
+
+    async def _calculate_cart_discount(self, subtotal: float, items: List[Dict], coupon_codes: List[str], payment_method: Optional[str] = None) -> float:
+        """Calculate total discount from multiple coupons"""
+        # Discount only applicable for crypto payment
+        if payment_method and payment_method.lower() != "crypto":
+            return 0.0
+
+        total_discount = 0.0
+
+        for code in coupon_codes:
+            coupon = await self._coupon_repo.get_coupon_by_code(code)
+            if not coupon:
+                continue
+
+            # 1. Minimum/Maximum amount checks
+            if coupon.minimum_amount > 0 and subtotal < float(coupon.minimum_amount):
+                continue
+            if coupon.maximum_amount > 0 and subtotal > float(coupon.maximum_amount):
+                continue
+
+            # 2. Expiry check
+            if coupon.date_expires and coupon.date_expires < datetime.now():
+                continue
+
+            # 3. Usage limit check
+            if coupon.usage_limit and coupon.usage_count >= coupon.usage_limit:
+                continue
+
+            # 4. Calculate discount based on type
+            if coupon.discount_type == "fixed_cart":
+                total_discount += float(coupon.amount)
+            elif coupon.discount_type in ["percentage", "percent"]:
+                total_discount += (subtotal * (float(coupon.amount) / 100.0))
+            elif coupon.discount_type == "fixed_product":
+                # Only apply to specific products if defined
+                for item in items:
+                    if not coupon.product_ids or item["product_id"] in coupon.product_ids:
+                        if item["product_id"] not in coupon.excluded_product_ids:
+                            total_discount += (float(coupon.amount) * item["quantity"])
+            elif coupon.discount_type in ["percentage_product", "percent_product"]:
+                for item in items:
+                    if not coupon.product_ids or item["product_id"] in coupon.product_ids:
+                        if item["product_id"] not in coupon.excluded_product_ids:
+                            total_discount += (item["line_total"] * (float(coupon.amount) / 100.0))
+
+        return total_discount
 
     async def _get_or_create_session(self, user_id: int):
         """Get or create cart session for user"""
@@ -2190,18 +2447,19 @@ class WCCartRepository:
         """Remove item from cart"""
         return await self.update_cart_item(user_id, product_id, 0, variation_id)
 
-    async def clear_cart(self, user_id: int) -> Dict[str, Any]:
+    async def clear_cart(self, user_id: int, payment_method: Optional[str] = None) -> Dict[str, Any]:
         """Clear all items from cart"""
         import json
 
         session = await self._get_or_create_session(user_id)
         cart_data = {"items": [], "coupon_codes": []}
         await self._save_cart_data(session, cart_data)
-        return await self.get_cart(user_id)
+        return await self.get_cart(user_id, payment_method=payment_method)
 
-    async def apply_coupon(self, user_id: int, coupon_code: str) -> Dict[str, Any]:
+    async def apply_coupon(self, user_id: int, coupon_code: str, payment_method: Optional[str] = None) -> Dict[str, Any]:
         """Apply a coupon to the cart"""
         import json
+        from fastapi import HTTPException
 
         session = await self._get_or_create_session(user_id)
 
@@ -2214,13 +2472,17 @@ class WCCartRepository:
             cart_data["coupon_codes"] = []
 
         if coupon_code not in cart_data["coupon_codes"]:
+            # Validate coupon before adding
+            coupon = await self._coupon_repo.get_coupon_by_code(coupon_code)
+            if not coupon:
+                raise HTTPException(status_code=404, detail="Invalid coupon code")
+
             cart_data["coupon_codes"].append(coupon_code)
-            # TODO: Calculate discount from coupon
 
         await self._save_cart_data(session, cart_data)
-        return await self.get_cart(user_id)
+        return await self.get_cart(user_id, payment_method=payment_method)
 
-    async def remove_coupon(self, user_id: int, coupon_code: str) -> Dict[str, Any]:
+    async def remove_coupon(self, user_id: int, coupon_code: str, payment_method: Optional[str] = None) -> Dict[str, Any]:
         """Remove a coupon from the cart"""
         import json
 
@@ -2235,7 +2497,7 @@ class WCCartRepository:
             cart_data["coupon_codes"] = [c for c in cart_data["coupon_codes"] if c != coupon_code]
 
         await self._save_cart_data(session, cart_data)
-        return await self.get_cart(user_id)
+        return await self.get_cart(user_id, payment_method=payment_method)
 
     async def checkout(
         self,
@@ -2363,6 +2625,32 @@ class WCCartRepository:
                 if item.get(link_key):
                     response["redirect_url"] = item[link_key]
                     break
+        elif payment_method == "crypto":
+            from app.service.nowpayments_service import NOWPaymentsService
+            from app.schema.crypto_payment import NOWPaymentsInvoiceRequest
+            from app.core.config import settings
+            from app.core.logging_config import logger
+
+            service = NOWPaymentsService(self.session)
+            invoice_data = NOWPaymentsInvoiceRequest(
+                price_amount=float(cart["total"]),
+                price_currency="usd",
+                order_id=str(order_id),
+                order_description=f"Order #{order_id} at {settings.APP_NAME}",
+                ipn_callback_url=f"{settings.BACKEND_URL}/api/v1/crypto-payments/ipn-callback",
+                success_url=f"{settings.FRONTEND_URL}/my-orders/{order_id}",
+                cancel_url=f"{settings.FRONTEND_URL}/checkout"
+            )
+            try:
+                invoice = await service.create_invoice(invoice_data, user_id)
+                if invoice and hasattr(invoice, "invoice_url"):
+                    response["redirect_url"] = invoice.invoice_url
+                elif isinstance(invoice, dict) and "invoice_url" in invoice:
+                     response["redirect_url"] = invoice["invoice_url"]
+            except Exception as e:
+                logger.error(f"Failed to create NOWPayments invoice for order {order_id}: {str(e)}")
+                # We still return the order_id so the user can see it in their dashboard
+                response["message"] = f"Order created, but payment redirection failed: {str(e)}"
 
         return response
 
