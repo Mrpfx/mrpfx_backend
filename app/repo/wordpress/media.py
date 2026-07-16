@@ -10,6 +10,7 @@ from PIL import Image
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model.wordpress.core import WPPost, WPPostMeta
+from app.core.config import settings
 
 
 class WPMediaRepository:
@@ -74,9 +75,16 @@ class WPMediaRepository:
         title: Optional[str] = None,
         description: Optional[str] = None,
         alt_text: Optional[str] = None,
-        caption: Optional[str] = None
+        caption: Optional[str] = None,
+        s3_key: Optional[str] = None,
+        file_bytes: Optional[bytes] = None
     ) -> Dict[str, Any]:
-        """Create a new media attachment record"""
+        """Create a new media attachment record
+
+        Args:
+            s3_key: S3 object key (for Railway bucket storage)
+            file_bytes: Raw file bytes (for S3-based image processing)
+        """
         now = datetime.now()
 
         attachment = WPPost(
@@ -104,30 +112,33 @@ class WPMediaRepository:
 
         attachment_id = attachment.ID
 
-        # Add alt text as meta
         if alt_text:
             await self._set_attachment_meta(attachment_id, "_wp_attachment_alt_text", alt_text)
 
-        # Add attached file path
-        # WP stores relative to uploads dir: 2024/02/filename.ext
-        relative_path = guid.split("/wp-content/uploads/")[-1] if "/wp-content/uploads/" in guid else filename
-        await self._set_attachment_meta(attachment_id, "_wp_attached_file", relative_path)
+        if s3_key:
+            await self._set_attachment_meta(attachment_id, "_wp_attached_file", s3_key)
+        else:
+            relative_path = guid.split("/wp-content/uploads/")[-1] if "/wp-content/uploads/" in guid else filename
+            await self._set_attachment_meta(attachment_id, "_wp_attached_file", relative_path)
 
-        # Generate thumbnails and metadata
         if mime_type.startswith("image/"):
             try:
-                # Need absolute path to process the file
-                abs_path = os.path.join(os.getcwd(), guid.split("/")[-4], guid.split("/")[-3], guid.split("/")[-2], guid.split("/")[-1])
-                # Simpler: just use relative path from cwd
-                abs_path = guid.split(str(self.session.bind.url).rsplit("/", 1)[0])[-1].lstrip("/")
-                # Actually, the file was just saved in app/v1/api/wordpress/media.py to wp-content/uploads/...
-                abs_path = os.path.join("wp-content/uploads", relative_path)
-
-                metadata = await self._generate_image_metadata(abs_path, relative_path)
-                if metadata:
-                    await self._set_attachment_meta(attachment_id, "_wp_attachment_metadata", metadata)
+                if s3_key and file_bytes:
+                    from app.service.storage import storage
+                    sizes_meta = await storage.generate_thumbnails(file_bytes, s3_key)
+                    if sizes_meta:
+                        metadata = self._serialize_image_metadata(
+                            file_bytes, s3_key, sizes_meta
+                        )
+                        if metadata:
+                            await self._set_attachment_meta(attachment_id, "_wp_attachment_metadata", metadata)
+                else:
+                    relative_path = guid.split("/wp-content/uploads/")[-1] if "/wp-content/uploads/" in guid else filename
+                    abs_path = os.path.join("wp-content/uploads", relative_path)
+                    metadata = await self._generate_image_metadata(abs_path, relative_path)
+                    if metadata:
+                        await self._set_attachment_meta(attachment_id, "_wp_attachment_metadata", metadata)
             except Exception as e:
-                # Log error but don't fail the whole upload
                 print(f"Error generating image metadata: {e}")
 
         return await self._build_media_response(attachment)
@@ -185,8 +196,23 @@ class WPMediaRepository:
         if not attachment:
             return False
 
+        if force and settings.USE_RAILWAY_BUCKET:
+            from app.service.storage import storage
+            s3_key_meta = await self._get_attachment_meta(attachment_id, "_wp_attached_file")
+            if s3_key_meta:
+                keys_to_delete = [s3_key_meta]
+                metadata_meta = await self._get_attachment_meta(attachment_id, "_wp_attachment_metadata")
+                if metadata_meta:
+                    for size in ["thumbnail", "medium", "large"]:
+                        pattern = rf's:{len(size)}:"{size}";a:4:{{s:4:"file";s:\d+:"([^"]+)"'
+                        match = re.search(pattern, metadata_meta)
+                        if match:
+                            base_dir = s3_key_meta.rsplit("/", 1)[0] if "/" in s3_key_meta else ""
+                            thumb_key = f"{base_dir}/{match.group(1)}"
+                            keys_to_delete.append(thumb_key)
+                await storage.delete_files(keys_to_delete)
+
         if force:
-            # Delete meta first
             meta_query = select(WPPostMeta).where(WPPostMeta.post_id == attachment_id)
             meta_result = await self.session.exec(meta_query)
             for meta in meta_result.all():
@@ -243,7 +269,7 @@ class WPMediaRepository:
 
     # Helper: Generate image metadata and resized versions
     async def _generate_image_metadata(self, file_path: str, relative_path: str) -> Optional[str]:
-        """Generate multiple image sizes and return serialized WP metadata"""
+        """Generate multiple image sizes and return serialized WP metadata (local filesystem)"""
         if not os.path.exists(file_path):
             return None
 
@@ -252,11 +278,10 @@ class WPMediaRepository:
                 width, height = img.size
                 mime_type = f"image/{img.format.lower()}"
 
-                # Sizes to generate
                 target_sizes = {
-                    "thumbnail": (150, 150, True),  # Crop
-                    "medium": (300, 300, False),    # Scale
-                    "large": (1024, 1024, False)    # Scale
+                    "thumbnail": (150, 150, True),
+                    "medium": (300, 300, False),
+                    "large": (1024, 1024, False)
                 }
 
                 file_dir = os.path.dirname(file_path)
@@ -265,24 +290,19 @@ class WPMediaRepository:
                 sizes_meta = {}
 
                 for size_name, (tw, th, crop) in target_sizes.items():
-                    # Only resize if original is larger
                     if width > tw or height > th:
                         resized_img = img.copy()
                         if crop:
-                            # Center crop to aspect ratio
                             w_ratio = tw / width
                             h_ratio = th / height
                             ratio = max(w_ratio, h_ratio)
                             new_size = (int(width * ratio), int(height * ratio))
                             resized_img = resized_img.resize(new_size, Image.LANCZOS)
-
-                            # Calculate crop box
                             left = (resized_img.width - tw) / 2
                             top = (resized_img.height - th) / 2
                             resized_img = resized_img.crop((left, top, left + tw, top + th))
                             rw, rh = tw, th
                         else:
-                            # Thumbnail scale
                             resized_img.thumbnail((tw, th), Image.LANCZOS)
                             rw, rh = resized_img.size
 
@@ -297,8 +317,6 @@ class WPMediaRepository:
                             "mime-type": mime_type
                         }
 
-                # Serialize to WP Format (at least enough for our read logic)
-                # a:4:{s:5:"width";i:W;s:6:"height";i:H;s:4:"file";s:N:"REL_PATH";s:5:"sizes";a:M:{...}}
                 def serialize_size(name, data):
                     return (f's:{len(name)}:"{name}";a:4:{{'
                             f's:4:"file";s:{len(data["file"])}:"{data["file"]}";'
@@ -317,6 +335,27 @@ class WPMediaRepository:
         except Exception as e:
             print(f"Error in _generate_image_metadata: {e}")
             return None
+
+    def _serialize_image_metadata(self, file_bytes: bytes, s3_key: str, sizes_meta: dict) -> str:
+        """Build PHP-serialized WP metadata string from S3-sized images."""
+        from PIL import Image as PILImage
+        import io
+        with PILImage.open(io.BytesIO(file_bytes)) as img:
+            width, height = img.size
+
+        def serialize_size(name, data):
+            return (f's:{len(name)}:"{name}";a:4:{{'
+                    f's:4:"file";s:{len(data["file"])}:"{data["file"]}";'
+                    f's:5:"width";i:{data["width"]};'
+                    f's:6:"height";i:{data["height"]};'
+                    f's:9:"mime-type";s:{len(data["mime-type"])}:"{data["mime-type"]}";}}')
+
+        sizes_str = "".join([serialize_size(k, v) for k, v in sizes_meta.items()])
+
+        return (f'a:5:{{s:5:"width";i:{width};s:6:"height";i:{height};'
+                f's:4:"file";s:{len(s3_key)}:"{s3_key}";'
+                f's:5:"sizes";a:{len(sizes_meta)}:{{{sizes_str}}}'
+                f's:10:"image_meta";a:0:{{}}}}')
 
     # Helper: Build media response
     async def _build_media_response(self, attachment: WPPost) -> Dict[str, Any]:

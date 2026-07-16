@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = "tn4DES6YEUKFxpctSkJyWlcvssyMj9ypiRTGw7a8Etw="
 
     # Email Settings
+    MAIL_DRIVER: str = "smtp"  # "smtp" or "mailjet"
+
+    # SMTP Settings
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
@@ -58,6 +61,18 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "MRPFX"
     SMTP_TLS: bool = True
     ADMIN_EMAIL: str = ""  # Email to receive admin notifications
+
+    # Mailjet Settings
+    MAILJET_API_KEY: str = ""
+    MAILJET_SECRET_KEY: str = ""
+
+    # Railway Bucket (S3-compatible) Settings
+    USE_RAILWAY_BUCKET: bool = False
+    BUCKET_ENDPOINT: str = "https://storage.railway.app"
+    BUCKET_REGION: str = "auto"
+    BUCKET_NAME: str = ""
+    BUCKET_ACCESS_KEY_ID: str = ""
+    BUCKET_SECRET_ACCESS_KEY: str = ""
 
     # NOWPayments Settings
     NOWPAYMENTS_API_KEY: str = ""

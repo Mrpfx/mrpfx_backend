@@ -111,6 +111,13 @@ base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app.mount("/wp-content", StaticFiles(directory=os.path.join(base_dir, "wp-content")), name="wp-content")
 
 
+# Mount file-serving sub-app (no API key required, for public file access)
+from fastapi import FastAPI as SubApp
+from app.v1.api.files import router as files_router
+file_app = SubApp()
+file_app.include_router(files_router)
+app.mount(f"{settings.API_V1_PREFIX}/files", file_app)
+
 # Register routers
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 from app.v1.api.wordpress import router as wordpress_router

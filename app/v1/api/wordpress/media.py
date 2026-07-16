@@ -11,6 +11,7 @@ from app.db.session import get_session
 from app.repo.wordpress.media import WPMediaRepository
 from app.dependencies.auth import get_current_user
 from app.model.user import User
+from app.core.config import settings
 
 
 router = APIRouter()
@@ -87,40 +88,54 @@ async def create_media(
 ):
     """
     Upload a new media attachment.
+
+    When USE_RAILWAY_BUCKET=True, the file is uploaded to Railway S3-compatible
+    bucket and the URL is stored in the database as a proxy URL.
+    Otherwise, falls back to local filesystem storage.
     """
     import os
     import shutil
     from datetime import datetime
 
-    # Create directory structure: wp-content/uploads/{year}/{month}
     now = datetime.now()
     year = now.strftime("%Y")
     month = now.strftime("%m")
-    upload_dir = f"wp-content/uploads/{year}/{month}"
-    os.makedirs(upload_dir, exist_ok=True)
+    filename = file.filename or f"untitled_{int(now.timestamp())}"
 
-    # Save file
-    file_path = f"{upload_dir}/{file.filename}"
-    # Avoid overwrite by appending timestamp if exists? Or just simple for now.
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    # Generate URL
-    # Assuming request.base_url is correct, or use a configured base
-    base_url = str(request.base_url).rstrip("/")
-    file_url = f"{base_url}/{file_path}"
+    if settings.USE_RAILWAY_BUCKET:
+        from app.service.storage import storage
+        key = f"uploads/{year}/{month}/{filename}"
+        file_bytes = await file.read()
+        await storage.upload_bytes(
+            file_bytes, key,
+            content_type=file.content_type or "application/octet-stream"
+        )
+        guid = storage.get_public_url(key)
+        s3_key = key
+        file_data = file_bytes
+    else:
+        upload_dir = f"wp-content/uploads/{year}/{month}"
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = f"{upload_dir}/{filename}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        base_url = str(request.base_url).rstrip("/")
+        guid = f"{base_url}/{file_path}"
+        s3_key = None
+        file_data = None
 
     repo = WPMediaRepository(session)
     return await repo.create_attachment(
         user_id=current_user.ID,
-        filename=file.filename,
+        filename=filename,
         mime_type=file.content_type,
-        guid=file_url,
+        guid=guid,
         title=title,
         description=description,
         alt_text=alt_text,
-        caption=caption
+        caption=caption,
+        s3_key=s3_key,
+        file_bytes=file_data
     )
 
 

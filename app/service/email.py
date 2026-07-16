@@ -1,5 +1,6 @@
 """
 Email service for sending verification and password reset emails.
+Supports SMTP and Mailjet drivers, switchable via MAIL_DRIVER in .env.
 """
 import smtplib
 from email.mime.text import MIMEText
@@ -19,28 +20,16 @@ template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 env = Environment(loader=FileSystemLoader(template_dir))
 
 
-async def send_email(
+async def _send_smtp(
     to_email: str,
     subject: str,
     html_content: str,
     text_content: str = ""
 ) -> bool:
-    """
-    Send an email using SMTP.
-
-    Args:
-        to_email: Recipient email address
-        subject: Email subject
-        html_content: HTML email body
-        text_content: Plain text fallback
-
-    Returns:
-        True if email sent successfully, False otherwise
-    """
     if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
         logger.warning("SMTP not configured. Email not sent to %s", to_email)
         logger.info("Email content: Subject=%s, To=%s", subject, to_email)
-        return True  # Return True to not block auth flow during development
+        return True
 
     try:
         msg = MIMEMultipart("alternative")
@@ -48,12 +37,10 @@ async def send_email(
         msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
         msg["To"] = to_email
 
-        # Attach both plain text and HTML versions
         if text_content:
             msg.attach(MIMEText(text_content, "plain"))
         msg.attach(MIMEText(html_content, "html"))
 
-        # Connect and send
         if str(settings.SMTP_PORT) == "465":
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT)
         else:
@@ -65,12 +52,84 @@ async def send_email(
         server.sendmail(settings.SMTP_FROM_EMAIL, to_email, msg.as_string())
         server.quit()
 
-        logger.info("Email sent successfully to %s", to_email)
+        logger.info("Email sent successfully via SMTP to %s", to_email)
         return True
 
     except Exception as e:
-        logger.error("Failed to send email to %s: %s", to_email, str(e))
+        logger.error("Failed to send SMTP email to %s: %s", to_email, str(e))
         return False
+
+
+async def _send_mailjet(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    text_content: str = ""
+) -> bool:
+    if not settings.MAILJET_API_KEY or not settings.MAILJET_SECRET_KEY:
+        logger.warning("Mailjet not configured. Email not sent to %s", to_email)
+        logger.info("Email content: Subject=%s, To=%s", subject, to_email)
+        return True
+
+    try:
+        from mailjet_rest import Client
+
+        mailjet = Client(
+            auth=(settings.MAILJET_API_KEY, settings.MAILJET_SECRET_KEY),
+            version="v3.1",
+        )
+
+        data = {
+            "Messages": [
+                {
+                    "From": {
+                        "Email": settings.SMTP_FROM_EMAIL,
+                        "Name": settings.SMTP_FROM_NAME,
+                    },
+                    "To": [
+                        {
+                            "Email": to_email,
+                        }
+                    ],
+                    "Subject": subject,
+                    "HTMLPart": html_content,
+                    "TextPart": text_content or None,
+                }
+            ]
+        }
+
+        result = mailjet.send.create(data=data)
+
+        if result.status_code == 200 or result.status_code == 201:
+            logger.info("Email sent successfully via Mailjet to %s", to_email)
+            return True
+        else:
+            logger.error(
+                "Mailjet send failed for %s: status=%s, body=%s",
+                to_email, result.status_code, result.json(),
+            )
+            return False
+
+    except Exception as e:
+        logger.error("Failed to send Mailjet email to %s: %s", to_email, str(e))
+        return False
+
+
+async def send_email(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    text_content: str = ""
+) -> bool:
+    """
+    Send an email using the configured mail driver.
+
+    MAIL_DRIVER=smtp  -> uses SMTP (default)
+    MAIL_DRIVER=mailjet -> uses Mailjet API
+    """
+    if settings.MAIL_DRIVER == "mailjet":
+        return await _send_mailjet(to_email, subject, html_content, text_content)
+    return await _send_smtp(to_email, subject, html_content, text_content)
 
 
 def render_template(template_name: str, **context) -> str:
