@@ -72,7 +72,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
-    dependencies=[Depends(verify_api_key)]
 )
 
 # Rate Limit Exception Handler
@@ -119,16 +118,17 @@ file_app.include_router(files_router)
 app.mount(f"{settings.API_V1_PREFIX}/files", file_app)
 
 # Register routers
-app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
+api_key_dep = [Depends(verify_api_key)]
+app.include_router(auth_router, prefix=settings.API_V1_PREFIX, dependencies=api_key_dep)
 from app.v1.api.wordpress import router as wordpress_router
-app.include_router(wordpress_router, prefix=settings.API_V1_PREFIX)
+app.include_router(wordpress_router, prefix=settings.API_V1_PREFIX, dependencies=api_key_dep)
 from app.v1.api.admin import router as admin_router
-app.include_router(admin_router, prefix=settings.API_V1_PREFIX)
-app.include_router(crypto_payment_router, prefix=settings.API_V1_PREFIX)
+app.include_router(admin_router, prefix=settings.API_V1_PREFIX, dependencies=api_key_dep)
+app.include_router(crypto_payment_router, prefix=settings.API_V1_PREFIX, dependencies=api_key_dep)
 from app.v1.api.services import router as services_router
-app.include_router(services_router, prefix=settings.API_V1_PREFIX)
+app.include_router(services_router, prefix=settings.API_V1_PREFIX, dependencies=api_key_dep)
 from app.v1.api.traders import router as traders_router
-app.include_router(traders_router, prefix=settings.API_V1_PREFIX)
+app.include_router(traders_router, prefix=settings.API_V1_PREFIX, dependencies=api_key_dep)
 
 @app.get("/", tags=["Health"])
 async def root():
