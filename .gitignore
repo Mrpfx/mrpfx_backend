@@ -1,0 +1,48 @@
+# ─── Environment & Secrets ───────────────────────────────────────
+.env
+.env.*
+*.key
+*.pem
+*.cert
+secrets/
+
+# ─── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.Python
+env/
+venv/
+.venv/
+
+# ─── Database ────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── IDE & Editors ───────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Logs ────────────────────────────────────────────────────────
+*.log
+
+# ─── Uploads (local) ─────────────────────────────────────────────
+wp-content/uploads/
+
+# ─── Virtual Environment ─────────────────────────────────────────
+.venv/
+
+# ─── OS ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
