@@ -1,8 +1,9 @@
 import multiprocessing
 import os
 
-# Binding
-bind = "0.0.0.0:8000"
+# Binding - use Railway's PORT env or default to 8000
+port = os.getenv("PORT", "8000")
+bind = f"0.0.0.0:{port}"
 
 # Workers
 workers = multiprocessing.cpu_count() * 2 + 1
@@ -22,3 +23,8 @@ daemon = False
 
 # Process Name
 proc_name = "mrpfx_backend"
+
+# Trust headers from Railway proxy
+forwarded_allow_ips = "*"
+proxy_protocol = False
+proxy_allow_ips = "*"
