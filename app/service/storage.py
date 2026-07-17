@@ -100,7 +100,8 @@ class RailwayStorage:
             return None
 
     def get_public_url(self, key: str) -> str:
-        return f"{settings.BACKEND_URL}/api/v1/files/{key}"
+        base = settings.ASSETS_BASE_URL or settings.BACKEND_URL
+        return f"{base.rstrip('/')}/api/v1/files/{key}"
 
     async def generate_thumbnails(self, image_data: bytes, key_base: str) -> dict:
         """Generate and upload thumbnail sizes for an image.

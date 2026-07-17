@@ -11,6 +11,26 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model.wordpress.core import WPPost, WPPostMeta
 from app.core.config import settings
+from urllib.parse import urlparse
+
+
+def rewrite_file_url(url: str) -> str:
+    """Rewrite the base of a file URL to ASSETS_BASE_URL if configured.
+    
+    When migrating storage (e.g. cPanel → Railway), set ASSETS_BASE_URL
+    in .env so all file URLs returned to the frontend use the new base.
+    Original DB records keep their old URLs — this rewrites them on-the-fly.
+    """
+    if not settings.ASSETS_BASE_URL or not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc:
+            base = settings.ASSETS_BASE_URL.rstrip("/")
+            return url.replace(f"{parsed.scheme}://{parsed.netloc}", base)
+    except Exception:
+        pass
+    return url
 
 
 class WPMediaRepository:
@@ -239,9 +259,8 @@ class WPMediaRepository:
         if not attachment:
             return {}
 
-        base_url = attachment.guid
+        base_url = rewrite_file_url(attachment.guid)
 
-        # Get attachment metadata for sizes
         meta_query = select(WPPostMeta).where(
             WPPostMeta.post_id == attachment_id,
             WPPostMeta.meta_key == "_wp_attachment_metadata"
@@ -252,14 +271,10 @@ class WPMediaRepository:
         urls = {"full": base_url}
 
         if meta and meta.meta_value:
-            # Extract sizes from serialized PHP data
-            # Format: s:5:"sizes";a:N:{s:9:"thumbnail";a:4:{s:4:"file";s:nn:"file-150x150.jpg";...}}
             base_dir_url = base_url.rsplit("/", 1)[0]
 
-            # Simple regex parser for our generated metadata
             sizes = ["thumbnail", "medium", "large"]
             for size in sizes:
-                # Match: s:9:"thumbnail";a:4:{s:4:"file";s:23:"image-150x150.jpg";
                 pattern = rf's:{len(size)}:"{size}";a:4:{{s:4:"file";s:\d+:"([^"]+)"'
                 match = re.search(pattern, meta.meta_value)
                 if match:
@@ -360,10 +375,8 @@ class WPMediaRepository:
     # Helper: Build media response
     async def _build_media_response(self, attachment: WPPost) -> Dict[str, Any]:
         """Build a complete media response with all metadata"""
-        # Get alt text
         alt_meta = await self._get_attachment_meta(attachment.ID, "_wp_attachment_alt_text")
 
-        # Get URLs
         urls = await self.get_attachment_urls(attachment.ID)
 
         return {
@@ -372,12 +385,12 @@ class WPMediaRepository:
             "description": attachment.post_content,
             "caption": attachment.post_excerpt,
             "alt_text": alt_meta or "",
-            "url": attachment.guid,
+            "url": rewrite_file_url(attachment.guid),
             "mime_type": attachment.post_mime_type,
             "date_created": attachment.post_date,
             "date_modified": attachment.post_modified,
             "author": attachment.post_author,
-            "sizes": urls,
+            "sizes": {k: rewrite_file_url(v) for k, v in urls.items()},
             "slug": attachment.post_name
         }
 

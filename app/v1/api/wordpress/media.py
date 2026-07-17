@@ -104,7 +104,7 @@ async def create_media(
 
     if settings.USE_RAILWAY_BUCKET:
         from app.service.storage import storage
-        key = f"uploads/{year}/{month}/{filename}"
+        key = f"wp-content/uploads/{year}/{month}/{filename}"
         file_bytes = await file.read()
         await storage.upload_bytes(
             file_bytes, key,

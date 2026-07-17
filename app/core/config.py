@@ -49,8 +49,15 @@ class Settings(BaseSettings):
     # Encryption Key
     ENCRYPTION_KEY: str = "tn4DES6YEUKFxpctSkJyWlcvssyMj9ypiRTGw7a8Etw="
 
+    # Assets Base URL (for rewriting file/image URLs in responses)
+    # When set, all file URLs returned to the frontend will use this base.
+    # Useful when migrating storage: set this to the new Railway/CDN base URL
+    # so existing DB records with old cPanel URLs get rewritten automatically.
+    # Leave empty to use the original URL stored in the DB.
+    ASSETS_BASE_URL: str = ""
+
     # Email Settings
-    MAIL_DRIVER: str = "smtp"  # "smtp" or "mailjet"
+    MAIL_DRIVER: str = "smtp"  # "smtp", "mailjet", or "resend"
 
     # SMTP Settings
     SMTP_HOST: str = "smtp.gmail.com"
@@ -65,6 +72,9 @@ class Settings(BaseSettings):
     # Mailjet Settings
     MAILJET_API_KEY: str = ""
     MAILJET_SECRET_KEY: str = ""
+
+    # Resend Settings
+    RESEND_API_KEY: str = ""
 
     # Railway Bucket (S3-compatible) Settings
     USE_RAILWAY_BUCKET: bool = False
