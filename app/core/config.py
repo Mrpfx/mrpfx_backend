@@ -88,12 +88,12 @@ class Settings(BaseSettings):
     def PUBLIC_STORAGE_URL(self) -> str:
         """Public base URL for serving stored files.
         
-        Priority: ASSETS_BASE_URL > S3 direct URL (when bucket enabled) > BACKEND_URL
+        Priority: ASSETS_BASE_URL > backend proxy (when bucket enabled) > BACKEND_URL
         """
         if self.ASSETS_BASE_URL:
             return self.ASSETS_BASE_URL.rstrip("/")
-        if self.USE_RAILWAY_BUCKET and self.BUCKET_NAME:
-            return f"{self.BUCKET_ENDPOINT.rstrip('/')}/{self.BUCKET_NAME}"
+        if self.USE_RAILWAY_BUCKET:
+            return f"{self.BACKEND_URL.rstrip('/')}{self.API_V1_PREFIX}/files"
         return self.BACKEND_URL.rstrip("/")
 
     # NOWPayments Settings
