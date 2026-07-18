@@ -15,19 +15,34 @@ from urllib.parse import urlparse
 
 
 def rewrite_file_url(url: str) -> str:
-    """Rewrite the base of a file URL to ASSETS_BASE_URL if configured.
+    """Rewrite the base of a file URL to ASSETS_BASE_URL or BACKEND_URL if configured.
     
     When migrating storage (e.g. cPanel → Railway), set ASSETS_BASE_URL
     in .env so all file URLs returned to the frontend use the new base.
     Original DB records keep their old URLs — this rewrites them on-the-fly.
     """
-    if not settings.ASSETS_BASE_URL or not url:
+    if not url:
         return url
+        
     try:
         parsed = urlparse(url)
-        if parsed.netloc:
-            base = settings.ASSETS_BASE_URL.rstrip("/")
-            return url.replace(f"{parsed.scheme}://{parsed.netloc}", base)
+        # If ASSETS_BASE_URL is set, replace the existing domain
+        if settings.ASSETS_BASE_URL:
+            if parsed.netloc:
+                base = settings.ASSETS_BASE_URL.rstrip("/")
+                return url.replace(f"{parsed.scheme}://{parsed.netloc}", base)
+            else:
+                # It's a relative URL, prepend ASSETS_BASE_URL
+                base = settings.ASSETS_BASE_URL.rstrip("/")
+                path = url.lstrip("/")
+                return f"{base}/{path}"
+        
+        # If no ASSETS_BASE_URL, ensure relative URLs get the BACKEND_URL
+        if not parsed.netloc and settings.BACKEND_URL:
+            base = settings.BACKEND_URL.rstrip("/")
+            path = url.lstrip("/")
+            return f"{base}/{path}"
+            
     except Exception:
         pass
     return url
