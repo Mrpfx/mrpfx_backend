@@ -20,7 +20,8 @@ else:
         max_overflow=10,
         future=True,
         pool_size=20,
-        pool_pre_ping=True,  # Check connection liveness
+        pool_pre_ping=False,  # Disabled due to aiomysql signature mismatch
+        pool_recycle=1800,    # Added recycle to compensate for disabled pre_ping
         echo=settings.DEBUG,
     )
 
@@ -31,8 +32,8 @@ wp_engine = create_async_engine(
     max_overflow=10,
     future=True,
     pool_size=10,
-    pool_pre_ping=True,
-    pool_recycle=3600,
+    pool_pre_ping=False,      # Disabled due to aiomysql signature mismatch
+    pool_recycle=1800,
     echo=settings.DEBUG,
 )
 
