@@ -9,33 +9,7 @@ from app.schema.wordpress.signals import SignalRead, SignalCreate, SignalUpdate,
 from app.schema.wordpress.trading_tools import TradingToolRead, TradingToolCreate, TradingToolUpdate, TradingToolPagination
 from app.schema.wordpress.books import BookRead, BookCreate, BookUpdate, BookPagination
 from .posts import WPPostRepository
-from app.core.config import settings
-
-
-def _abs_url(url: Optional[str]) -> Optional[str]:
-    """Convert any file URL to a fully qualified absolute URL using PUBLIC_STORAGE_URL.
-
-    Handles:
-      - Relative paths  (/wp-content/uploads/... → {PUBLIC_STORAGE_URL}/wp-content/uploads/...)
-      - Old full URLs   (https://old-cpanel.com/wp-content/... → {PUBLIC_STORAGE_URL}/wp-content/...)
-      - Already correct URLs (passed through as-is if origin matches)
-    """
-    if not url:
-        return url
-    if url.startswith("/"):
-        return f"{settings.PUBLIC_STORAGE_URL}{url}"
-    if url.startswith("http://") or url.startswith("https://"):
-        base = settings.PUBLIC_STORAGE_URL
-        if url.startswith(base):
-            return url
-        try:
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            path = parsed.path
-            return f"{base}{path}"
-        except Exception:
-            return url
-    return url
+from app.core.urls import rewrite_url
 
 
 class DynamicContentRepository:
@@ -80,7 +54,7 @@ class DynamicContentRepository:
                 tp1=meta_dict.get("_signal_tp1", ""),
                 tp2=meta_dict.get("_signal_tp2"),
                 price=float(meta_dict.get("_signal_price", 0.0) or 0.0),
-                image_url=_abs_url(meta_dict.get("_signal_image_url"))
+                image_url=rewrite_url(meta_dict.get("_signal_image_url"))
             ))
 
         return SignalPagination(
@@ -182,7 +156,7 @@ class DynamicContentRepository:
             tp1=meta_dict.get("_signal_tp1", ""),
             tp2=meta_dict.get("_signal_tp2"),
             price=float(meta_dict.get("_signal_price", 0.0)),
-            image_url=_abs_url(meta_dict.get("_signal_image_url"))
+            image_url=rewrite_url(meta_dict.get("_signal_image_url"))
         )
 
     # ============== Trading Tools ==============
@@ -226,9 +200,9 @@ class DynamicContentRepository:
                 category=meta_dict.get("_tool_category", "free"),
                 description=meta_dict.get("_tool_description", ""),
                 price=float(meta_dict.get("_tool_price", 0.0) or 0.0),
-                image_url=_abs_url(meta_dict.get("_tool_image_url")),
-                download_url=_abs_url(meta_dict.get("_tool_download_url")),
-                purchase_url=_abs_url(meta_dict.get("_tool_purchase_url")),
+                image_url=rewrite_url(meta_dict.get("_tool_image_url")),
+                download_url=rewrite_url(meta_dict.get("_tool_download_url")),
+                purchase_url=rewrite_url(meta_dict.get("_tool_purchase_url")),
                 seller_payment_link=meta_dict.get("_tool_seller_payment_link"),
                 whop_payment_link=meta_dict.get("_tool_whop_payment_link")
             ))
@@ -331,9 +305,9 @@ class DynamicContentRepository:
             category=meta_dict.get("_tool_category", "free"),
             description=meta_dict.get("_tool_description", ""),
             price=float(meta_dict.get("_tool_price", 0.0)),
-            image_url=_abs_url(meta_dict.get("_tool_image_url")),
-            download_url=_abs_url(meta_dict.get("_tool_download_url")),
-            purchase_url=_abs_url(meta_dict.get("_tool_purchase_url")),
+            image_url=rewrite_url(meta_dict.get("_tool_image_url")),
+            download_url=rewrite_url(meta_dict.get("_tool_download_url")),
+            purchase_url=rewrite_url(meta_dict.get("_tool_purchase_url")),
             seller_payment_link=meta_dict.get("_tool_seller_payment_link"),
             whop_payment_link=meta_dict.get("_tool_whop_payment_link")
         )
@@ -370,9 +344,9 @@ class DynamicContentRepository:
                 is_free=meta_dict.get("_book_is_free") == "1",
                 description=meta_dict.get("_book_description", ""),
                 price=float(meta_dict.get("_book_price", 0.0) or 0.0),
-                image_url=_abs_url(meta_dict.get("_book_image_url")),
-                download_url=_abs_url(meta_dict.get("_book_download_url")),
-                purchase_url=_abs_url(meta_dict.get("_book_purchase_url")),
+                image_url=rewrite_url(meta_dict.get("_book_image_url")),
+                download_url=rewrite_url(meta_dict.get("_book_download_url")),
+                purchase_url=rewrite_url(meta_dict.get("_book_purchase_url")),
                 seller_payment_link=meta_dict.get("_book_seller_payment_link"),
                 whop_payment_link=meta_dict.get("_book_whop_payment_link")
             ))
@@ -471,9 +445,9 @@ class DynamicContentRepository:
             is_free=meta_dict.get("_book_is_free") == "1",
             description=meta_dict.get("_book_description", ""),
             price=float(meta_dict.get("_book_price", 0.0)),
-            image_url=_abs_url(meta_dict.get("_book_image_url")),
-            download_url=_abs_url(meta_dict.get("_book_download_url")),
-            purchase_url=_abs_url(meta_dict.get("_book_purchase_url")),
+            image_url=rewrite_url(meta_dict.get("_book_image_url")),
+            download_url=rewrite_url(meta_dict.get("_book_download_url")),
+            purchase_url=rewrite_url(meta_dict.get("_book_purchase_url")),
             seller_payment_link=meta_dict.get("_book_seller_payment_link"),
             whop_payment_link=meta_dict.get("_book_whop_payment_link")
         )
@@ -493,7 +467,7 @@ class DynamicContentRepository:
             videos.append({
                 "id": meta_dict.get("_video_youtube_id", ""),
                 "title": p.post_title,
-                "thumbnail": meta_dict.get("_video_thumbnail_url", "")
+                "thumbnail": rewrite_url(meta_dict.get("_video_thumbnail_url", ""))
             })
         return videos
 
@@ -519,5 +493,5 @@ class DynamicContentRepository:
         return {
             "id": youtube_id,
             "title": title,
-            "thumbnail": thumbnail
+            "thumbnail": rewrite_url(thumbnail)
         }

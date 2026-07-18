@@ -10,42 +10,7 @@ from PIL import Image
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.model.wordpress.core import WPPost, WPPostMeta
-from app.core.config import settings
-from urllib.parse import urlparse
-
-
-def rewrite_file_url(url: str) -> str:
-    """Rewrite the base of a file URL to ASSETS_BASE_URL or BACKEND_URL if configured.
-    
-    When migrating storage (e.g. cPanel → Railway), set ASSETS_BASE_URL
-    in .env so all file URLs returned to the frontend use the new base.
-    Original DB records keep their old URLs — this rewrites them on-the-fly.
-    """
-    if not url:
-        return url
-        
-    try:
-        parsed = urlparse(url)
-        # If ASSETS_BASE_URL is set, replace the existing domain
-        if settings.ASSETS_BASE_URL:
-            if parsed.netloc:
-                base = settings.ASSETS_BASE_URL.rstrip("/")
-                return url.replace(f"{parsed.scheme}://{parsed.netloc}", base)
-            else:
-                # It's a relative URL, prepend ASSETS_BASE_URL
-                base = settings.ASSETS_BASE_URL.rstrip("/")
-                path = url.lstrip("/")
-                return f"{base}/{path}"
-        
-        # If no ASSETS_BASE_URL, ensure relative URLs get the BACKEND_URL
-        if not parsed.netloc and settings.BACKEND_URL:
-            base = settings.BACKEND_URL.rstrip("/")
-            path = url.lstrip("/")
-            return f"{base}/{path}"
-            
-    except Exception:
-        pass
-    return url
+from app.core.urls import rewrite_url
 
 
 class WPMediaRepository:
@@ -274,7 +239,7 @@ class WPMediaRepository:
         if not attachment:
             return {}
 
-        base_url = rewrite_file_url(attachment.guid)
+        base_url = rewrite_url(attachment.guid)
 
         meta_query = select(WPPostMeta).where(
             WPPostMeta.post_id == attachment_id,
@@ -285,37 +250,11 @@ class WPMediaRepository:
 
         urls = {"full": base_url}
 
-        if settings.USE_RAILWAY_BUCKET:
-            s3_key_meta = await self._get_attachment_meta(attachment_id, "_wp_attached_file")
-            if s3_key_meta:
-                from app.service.storage import storage
-                presigned_full = await storage.generate_presigned_url(s3_key_meta, expires_in=604800)
-                if presigned_full:
-                    urls["full"] = presigned_full
-                    base_url = presigned_full  # fallback for sizes logic if presigned generation fails below
-                
-                if meta and meta.meta_value:
-                    base_dir = s3_key_meta.rsplit("/", 1)[0] if "/" in s3_key_meta else ""
-                    sizes = ["thumbnail", "medium", "large"]
-                    for size in sizes:
-                        pattern = rf's:{len(size)}:"{size}";a:4:{{s:4:"file";s:\d+:"([^"]+)"'
-                        match = re.search(pattern, meta.meta_value)
-                        if match:
-                            thumb_file = match.group(1)
-                            thumb_key = f"{base_dir}/{thumb_file}" if base_dir else thumb_file
-                            presigned_thumb = await storage.generate_presigned_url(thumb_key, expires_in=604800)
-                            if presigned_thumb:
-                                urls[size] = presigned_thumb
-                    return urls
-
         if meta and meta.meta_value:
-            # If not using railway bucket or fallback
             base_dir_url = base_url.rsplit("?", 1)[0].rsplit("/", 1)[0]
 
             sizes = ["thumbnail", "medium", "large"]
             for size in sizes:
-                if size in urls:  # Skip if already populated by presigned url logic
-                    continue
                 pattern = rf's:{len(size)}:"{size}";a:4:{{s:4:"file";s:\d+:"([^"]+)"'
                 match = re.search(pattern, meta.meta_value)
                 if match:
@@ -426,12 +365,12 @@ class WPMediaRepository:
             "description": attachment.post_content,
             "caption": attachment.post_excerpt,
             "alt_text": alt_meta or "",
-            "url": urls.get("full") or rewrite_file_url(attachment.guid),
+            "url": urls.get("full") or rewrite_url(attachment.guid),
             "mime_type": attachment.post_mime_type,
             "date_created": attachment.post_date,
             "date_modified": attachment.post_modified,
             "author": attachment.post_author,
-            "sizes": {k: rewrite_file_url(v) for k, v in urls.items()},
+            "sizes": {k: rewrite_url(v) for k, v in urls.items()},
             "slug": attachment.post_name
         }
 

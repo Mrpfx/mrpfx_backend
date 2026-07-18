@@ -15,6 +15,7 @@ from app.schema.wordpress.post import (
     WPCommentCreate, WPCommentUpdate, WPCommentRead,
     WPCategory, WPTag, WPImageRead
 )
+from app.core.urls import rewrite_url
 
 
 class WPPostRepository:
@@ -445,7 +446,7 @@ class WPPostRepository:
         return {
             "id": attachment.ID,
             "title": attachment.post_title,
-            "url": attachment.guid,
+            "url": rewrite_url(attachment.guid),
             "alt_text": alt_meta.meta_value if alt_meta else "",
             "caption": attachment.post_excerpt
         }

@@ -24,6 +24,7 @@ from app.schema.wordpress.woocommerce import (
     WCCouponRead, WCCouponCreate, WCCouponUpdate
 )
 from fastapi import HTTPException
+from app.core.urls import rewrite_url
 
 
 class WCOrderRepository:
@@ -781,7 +782,7 @@ class WCProductRepository:
                 if tid in img_posts:
                     att = img_posts[tid]
                     featured_image = {
-                        "id": att.ID, "url": att.guid, "title": att.post_title,
+                        "id": att.ID, "url": rewrite_url(att.guid), "title": att.post_title,
                         "alt_text": img_alts.get(tid, ""), "caption": att.post_excerpt
                     }
 
@@ -790,7 +791,7 @@ class WCProductRepository:
                     if gid in img_posts:
                         att = img_posts[gid]
                         gallery_images.append({
-                            "id": att.ID, "url": att.guid, "title": att.post_title,
+                            "id": att.ID, "url": rewrite_url(att.guid), "title": att.post_title,
                             "alt_text": img_alts.get(gid, ""), "caption": att.post_excerpt
                         })
 
@@ -1001,7 +1002,7 @@ class WCProductRepository:
 
             for tid_int, att in img_posts.items():
                 img_map[tid_int] = {
-                    "id": att.ID, "url": att.guid, "title": att.post_title,
+                    "id": att.ID, "url": rewrite_url(att.guid), "title": att.post_title,
                     "alt_text": img_alts.get(tid_int, ""), "caption": att.post_excerpt
                 }
 
@@ -1713,7 +1714,7 @@ class WCProductRepository:
         return {
             "id": attachment.ID,
             "title": attachment.post_title,
-            "url": attachment.guid,
+            "url": rewrite_url(attachment.guid),
             "alt_text": alt_meta.meta_value if alt_meta else "",
             "caption": attachment.post_excerpt,
             "mime_type": attachment.post_mime_type
@@ -2249,7 +2250,7 @@ class WCCartRepository:
                     "product_name": variation_name or product.name,
                     "product_price": price,
                     "line_total": line_total,
-                    "product_image": None,
+                    "product_image": rewrite_url(product.featured_image.url) if product.featured_image else None,
                     "seller_payment_link": product.seller_payment_link,
                     "whop_payment_link": product.whop_payment_link,
                     "custom_fields": item.get("custom_fields")
