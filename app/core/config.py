@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     BUCKET_ACCESS_KEY_ID: str = ""
     BUCKET_SECRET_ACCESS_KEY: str = ""
 
+    @property
+    def PUBLIC_STORAGE_URL(self) -> str:
+        """Public base URL for serving stored files.
+        
+        Priority: ASSETS_BASE_URL > S3 direct URL (when bucket enabled) > BACKEND_URL
+        """
+        if self.ASSETS_BASE_URL:
+            return self.ASSETS_BASE_URL.rstrip("/")
+        if self.USE_RAILWAY_BUCKET and self.BUCKET_NAME:
+            return f"{self.BUCKET_ENDPOINT.rstrip('/')}/{self.BUCKET_NAME}"
+        return self.BACKEND_URL.rstrip("/")
+
     # NOWPayments Settings
     NOWPAYMENTS_API_KEY: str = ""
     NOWPAYMENTS_API_URL: str = "https://api.nowpayments.io/v1"

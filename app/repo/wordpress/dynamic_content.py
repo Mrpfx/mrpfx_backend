@@ -13,14 +13,13 @@ from app.core.config import settings
 
 
 def _abs_url(url: Optional[str]) -> Optional[str]:
-    """Convert a relative path to absolute URL using ASSETS_BASE_URL or BACKEND_URL."""
+    """Convert a relative path to absolute URL using PUBLIC_STORAGE_URL."""
     if not url:
         return url
     if url.startswith("http://") or url.startswith("https://"):
         return url
     if url.startswith("/"):
-        base = settings.ASSETS_BASE_URL.rstrip("/") if settings.ASSETS_BASE_URL else settings.BACKEND_URL.rstrip("/")
-        return f"{base}{url}"
+        return f"{settings.PUBLIC_STORAGE_URL}{url}"
     return url
 
 
