@@ -270,11 +270,37 @@ class WPMediaRepository:
 
         urls = {"full": base_url}
 
+        if settings.USE_RAILWAY_BUCKET:
+            s3_key_meta = await self._get_attachment_meta(attachment_id, "_wp_attached_file")
+            if s3_key_meta:
+                from app.service.storage import storage
+                presigned_full = await storage.generate_presigned_url(s3_key_meta, expires_in=604800)
+                if presigned_full:
+                    urls["full"] = presigned_full
+                    base_url = presigned_full  # fallback for sizes logic if presigned generation fails below
+                
+                if meta and meta.meta_value:
+                    base_dir = s3_key_meta.rsplit("/", 1)[0] if "/" in s3_key_meta else ""
+                    sizes = ["thumbnail", "medium", "large"]
+                    for size in sizes:
+                        pattern = rf's:{len(size)}:"{size}";a:4:{{s:4:"file";s:\d+:"([^"]+)"'
+                        match = re.search(pattern, meta.meta_value)
+                        if match:
+                            thumb_file = match.group(1)
+                            thumb_key = f"{base_dir}/{thumb_file}" if base_dir else thumb_file
+                            presigned_thumb = await storage.generate_presigned_url(thumb_key, expires_in=604800)
+                            if presigned_thumb:
+                                urls[size] = presigned_thumb
+                    return urls
+
         if meta and meta.meta_value:
-            base_dir_url = base_url.rsplit("/", 1)[0]
+            # If not using railway bucket or fallback
+            base_dir_url = base_url.rsplit("?", 1)[0].rsplit("/", 1)[0]
 
             sizes = ["thumbnail", "medium", "large"]
             for size in sizes:
+                if size in urls:  # Skip if already populated by presigned url logic
+                    continue
                 pattern = rf's:{len(size)}:"{size}";a:4:{{s:4:"file";s:\d+:"([^"]+)"'
                 match = re.search(pattern, meta.meta_value)
                 if match:
@@ -385,7 +411,7 @@ class WPMediaRepository:
             "description": attachment.post_content,
             "caption": attachment.post_excerpt,
             "alt_text": alt_meta or "",
-            "url": rewrite_file_url(attachment.guid),
+            "url": urls.get("full") or rewrite_file_url(attachment.guid),
             "mime_type": attachment.post_mime_type,
             "date_created": attachment.post_date,
             "date_modified": attachment.post_modified,
