@@ -9,6 +9,20 @@ from app.schema.wordpress.signals import SignalRead, SignalCreate, SignalUpdate,
 from app.schema.wordpress.trading_tools import TradingToolRead, TradingToolCreate, TradingToolUpdate, TradingToolPagination
 from app.schema.wordpress.books import BookRead, BookCreate, BookUpdate, BookPagination
 from .posts import WPPostRepository
+from app.core.config import settings
+
+
+def _abs_url(url: Optional[str]) -> Optional[str]:
+    """Convert a relative path to absolute URL using ASSETS_BASE_URL or BACKEND_URL."""
+    if not url:
+        return url
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/"):
+        base = settings.ASSETS_BASE_URL.rstrip("/") if settings.ASSETS_BASE_URL else settings.BACKEND_URL.rstrip("/")
+        return f"{base}{url}"
+    return url
+
 
 class DynamicContentRepository:
     def __init__(self, session: AsyncSession):
@@ -52,7 +66,7 @@ class DynamicContentRepository:
                 tp1=meta_dict.get("_signal_tp1", ""),
                 tp2=meta_dict.get("_signal_tp2"),
                 price=float(meta_dict.get("_signal_price", 0.0) or 0.0),
-                image_url=meta_dict.get("_signal_image_url")
+                image_url=_abs_url(meta_dict.get("_signal_image_url"))
             ))
 
         return SignalPagination(
@@ -154,7 +168,7 @@ class DynamicContentRepository:
             tp1=meta_dict.get("_signal_tp1", ""),
             tp2=meta_dict.get("_signal_tp2"),
             price=float(meta_dict.get("_signal_price", 0.0)),
-            image_url=meta_dict.get("_signal_image_url")
+            image_url=_abs_url(meta_dict.get("_signal_image_url"))
         )
 
     # ============== Trading Tools ==============
@@ -198,9 +212,9 @@ class DynamicContentRepository:
                 category=meta_dict.get("_tool_category", "free"),
                 description=meta_dict.get("_tool_description", ""),
                 price=float(meta_dict.get("_tool_price", 0.0) or 0.0),
-                image_url=meta_dict.get("_tool_image_url"),
-                download_url=meta_dict.get("_tool_download_url"),
-                purchase_url=meta_dict.get("_tool_purchase_url"),
+                image_url=_abs_url(meta_dict.get("_tool_image_url")),
+                download_url=_abs_url(meta_dict.get("_tool_download_url")),
+                purchase_url=_abs_url(meta_dict.get("_tool_purchase_url")),
                 seller_payment_link=meta_dict.get("_tool_seller_payment_link"),
                 whop_payment_link=meta_dict.get("_tool_whop_payment_link")
             ))
@@ -342,9 +356,9 @@ class DynamicContentRepository:
                 is_free=meta_dict.get("_book_is_free") == "1",
                 description=meta_dict.get("_book_description", ""),
                 price=float(meta_dict.get("_book_price", 0.0) or 0.0),
-                image_url=meta_dict.get("_book_image_url"),
-                download_url=meta_dict.get("_book_download_url"),
-                purchase_url=meta_dict.get("_book_purchase_url"),
+                image_url=_abs_url(meta_dict.get("_book_image_url")),
+                download_url=_abs_url(meta_dict.get("_book_download_url")),
+                purchase_url=_abs_url(meta_dict.get("_book_purchase_url")),
                 seller_payment_link=meta_dict.get("_book_seller_payment_link"),
                 whop_payment_link=meta_dict.get("_book_whop_payment_link")
             ))
