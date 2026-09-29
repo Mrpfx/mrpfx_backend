@@ -110,12 +110,62 @@ async def _send_mailjet(
             )
             return False
 
-    except Exception as e:
-        logger.error("Failed to send Mailjet email to %s: %s", to_email, str(e))
+        except Exception as e:
+        logger.error("Failed to send Resend email to %s: %s", to_email, str(e))
         return False
 
 
-async def _send_resend(
+async def sync_contact_to_resend(
+    email: str,
+    first_name: str = ""
+) -> bool:
+    """
+    Create/update a verified website user in Resend and
+    add them to the permanent newsletter segment.
+    """
+    if not settings.RESEND_API_KEY:
+        logger.warning("Resend not configured. Contact not synced: %s", email)
+        return False
+
+    if not settings.RESEND_NEWSLETTER_SEGMENT_ID:
+        logger.warning(
+            "RESEND_NEWSLETTER_SEGMENT_ID not configured. Contact not synced: %s",
+            email
+        )
+        return False
+
+    try:
+        import resend
+
+        resend.api_key = settings.RESEND_API_KEY
+
+        params = {
+            "email": email.strip().lower(),
+            "unsubscribed": False,
+            "segment_ids": [settings.RESEND_NEWSLETTER_SEGMENT_ID],
+        }
+
+        if first_name:
+            params["first_name"] = first_name
+
+        result = resend.Contacts.create(params)
+
+        logger.info(
+            "Contact synced successfully to Resend newsletter: %s",
+            email
+        )
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Failed to sync contact to Resend newsletter %s: %s",
+            email,
+            str(e)
+        )
+        return False
+
+
+async def send_email(
     to_email: str,
     subject: str,
     html_content: str,
