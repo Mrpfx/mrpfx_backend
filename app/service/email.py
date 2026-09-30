@@ -110,7 +110,47 @@ async def _send_mailjet(
             )
             return False
 
-        except Exception as e:
+            except Exception as e:
+        logger.error("Failed to send Mailjet email to %s: %s", to_email, str(e))
+        return False
+
+
+async def _send_resend(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    text_content: str = ""
+) -> bool:
+    if not settings.RESEND_API_KEY:
+        logger.warning("Resend not configured. Email not sent to %s", to_email)
+        logger.info("Email content: Subject=%s, To=%s", subject, to_email)
+        return True
+
+    try:
+        import resend
+
+        resend.api_key = settings.RESEND_API_KEY
+
+        params = {
+            "from": f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html_content,
+        }
+
+        if text_content:
+            params["text"] = text_content
+
+        r = resend.Emails.send(params)
+
+        if r and r.get("id"):
+            logger.info("Email sent successfully via Resend to %s", to_email)
+            return True
+        else:
+            logger.error("Resend send failed for %s: %s", to_email, r)
+            return False
+
+    except Exception as e:
         logger.error("Failed to send Resend email to %s: %s", to_email, str(e))
         return False
 
@@ -148,7 +188,7 @@ async def sync_contact_to_resend(
         if first_name:
             params["first_name"] = first_name
 
-        result = resend.Contacts.create(params)
+        resend.Contacts.create(params)
 
         logger.info(
             "Contact synced successfully to Resend newsletter: %s",
@@ -163,46 +203,6 @@ async def sync_contact_to_resend(
             str(e)
         )
         return False
-
-
-async def send_email(
-    to_email: str,
-    subject: str,
-    html_content: str,
-    text_content: str = ""
-) -> bool:
-    if not settings.RESEND_API_KEY:
-        logger.warning("Resend not configured. Email not sent to %s", to_email)
-        logger.info("Email content: Subject=%s, To=%s", subject, to_email)
-        return True
-
-    try:
-        import resend
-
-        resend.api_key = settings.RESEND_API_KEY
-
-        params = {
-            "from": f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>",
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content,
-        }
-        if text_content:
-            params["text"] = text_content
-
-        r = resend.Emails.send(params)
-
-        if r and r.get("id"):
-            logger.info("Email sent successfully via Resend to %s", to_email)
-            return True
-        else:
-            logger.error("Resend send failed for %s: %s", to_email, r)
-            return False
-
-    except Exception as e:
-        logger.error("Failed to send Resend email to %s: %s", to_email, str(e))
-        return False
-
 
 async def send_email(
     to_email: str,
