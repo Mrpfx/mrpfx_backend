@@ -273,20 +273,20 @@ class AuthService:
         await self.user_repo.set_status(user, 1)
         await self.user_repo.set_activation_key(user, "")
 
-        # Send welcome email via background task
+        # Send welcome email and sync Resend contact via background tasks
         from app.service.email import send_welcome_email, sync_contact_to_resend
 
-background_tasks.add_task(
-    send_welcome_email,
-    email=user.user_email,
-    display_name=user.display_name or user.user_login
-)
+        background_tasks.add_task(
+            send_welcome_email,
+            email=user.user_email,
+            username=user.display_name or user.user_login
+        )
 
-background_tasks.add_task(
-    sync_contact_to_resend,
-    email=user.user_email,
-    first_name=user.display_name or user.user_login
-)
+        background_tasks.add_task(
+            sync_contact_to_resend,
+            email=user.user_email,
+            first_name=user.display_name or user.user_login
+        )
 
         return user
 
