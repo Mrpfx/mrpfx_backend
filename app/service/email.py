@@ -110,7 +110,7 @@ async def _send_mailjet(
             )
             return False
 
-            except Exception as e:
+    except Exception as e:
         logger.error("Failed to send Mailjet email to %s: %s", to_email, str(e))
         return False
 
